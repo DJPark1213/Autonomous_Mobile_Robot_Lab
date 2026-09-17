@@ -7,9 +7,9 @@ The team has completed joystick teleoperation. Wandering, cruise control, and co
 ## Start here
 
 - [Team progress and file ownership](docs/TEAM_PROGRESS.md)
-- [Original team work plan](docs/Lab_1_Team_Work_Plan_Cleaned.docx)
+- [Original team work plan](docs/Lab_1_Team_Work_Plan.docx)
 - [ROS workspace overview](amr_ws/README.md)
-- [Lab handout with slide images](docs/references/06_lab_1_2.md) or [browser version](docs/references/06_lab_1_2.html)
+
 
 ## Layout
 
@@ -18,7 +18,7 @@ amr_ws/
   src/py_amr_ttb/          ROS 2 Python package, launch files, and supplied tests
 docs/
   TEAM_PROGRESS.md         Current status, ownership, and remaining deliverables
-  Lab_1_Team_Work_Plan_Cleaned.docx
+  Lab_1_Team_Work_Plan.docx
   references/             Combined Lab 1/2 handout and its page images
 ```
 
