@@ -1,16 +1,16 @@
 # Lab 1 team progress and ownership
 
-Status transcribed from the supplied cleaned team work plan on September 17,
-2026. Owners are unassigned in that plan. Task 2 now contains offline-tested
-IR processing and wandering behavior. Tasks 3-4 still contain basic
-class/method templates only. Completed teleoperation is retained.
+Updated September 24, 2026 after integrating the supplied controller logic.
+Existing IR/wandering code is retained. Cruise and joystick mode integration
+are implemented and checked offline; physical verification and required
+experimental deliverables remain pending. Owner assignments are unchanged.
 
 | Task | Team status | Owner | Remaining deliverables |
 |---|---|---|---|
 | 1 Joystick teleoperation | Done; standalone file needs cleanup/integration | Not named | Coordinate remaining cleanup with integration lead |
-| 2 Wandering and IR plots | Logic implemented; controller hooks prepared; robot verification pending | Unassigned | Enable integration later, tune turns, demonstrate, record bag, produce plots and notes |
-| 3 Cruise control and speed plots | Pending | Unassigned | Assigned PID equation, 0.3 m/s demonstration, speed plots and setpoint-change tests |
-| 4 State machine and integration | Pending | Unassigned | Combined launch, all transitions, cruise buttons, R1 override/return, zero-speed stop |
+| 2 Wandering and IR plots | Logic connected; robot verification pending | Unassigned | Validate integration, tune turns, demonstrate, record bag, produce plots and notes |
+| 3 Cruise control and speed plots | Supplied PID integrated; verification pending | Unassigned | Assigned PID equation, 0.3 m/s demonstration, speed plots and setpoint-change tests |
+| 4 State machine and integration | Logic integrated; robot verification pending | Unassigned | Combined launch, all transitions, cruise buttons, R1 override/return, zero-speed stop |
 | 5 IR and odometry mapping | Optional; decide later | Unassigned | Separate mapping implementation, map, and assumptions after required work |
 
 ## File ownership
@@ -27,20 +27,16 @@ Paths below are relative to `amr_ws/src/py_amr_ttb/`.
 
 `ttb_turn.py`, its launch file, the joystick launch file, `__init__.py`, `setup.cfg`, the resource marker, and package tests are provided supporting files. `setup.py` and `package.xml` already contain starter integration support but remain subject to team review. Assign owners before overlapping edits to shared files.
 
-## Template behavior and pending decisions
+## Integrated behavior and pending decisions
 
-Joystick input, button detection, and R1 override belong directly in `lab_one_controller.py`. The separate joystick helper module has been removed; these methods remain TODO templates. The supplied Word plan retains the original proposed file split; this checklist reflects the updated structure.
-
-- `LabOneController` starts as an inert scaffold. It constructs the Part 2 objects and exposes `ir_callback()` and `wander_command()`, while the future subscription, timer, and publisher remain commented out for Task 4.
-- `LabOneController.teleop_command()` returns a zero command with a pending-task message. `PidSpeedController.update()` returns `0.0`.
-- `IrSensorState` validates readings and applies configurable sensor selection and threshold direction. `WanderBehavior` implements drive, explicit stop, random timed turn, and resume.
-- The confirmed TurtleBot 4 interface is `IrIntensityVector.readings`, with `IrIntensity.header` and `IrIntensity.value`; malformed or stale data produces a zero command.
-- Known joystick mappings/scales are retained for completed standalone teleoperation. Required PID gains remain constants; calibration and control timing are TODO sections.
-- The configured IR threshold is 35 because clear readings were below 7 and the lowest recorded 0.1 m front reading was 66; physical behavior still requires validation.
-- Recorded IR layout: message frame `base_link`; reading order is left, front-left, front-center-left, front-center-right, front-right, right. Part 2 checks indices 1-4.
-- Recorded samples: all clear-path values were below 7; at approximately 0.1 m, the four front readings were 176, 155, 220, and 66. The front-right value means right-side approaches still need verification with threshold 100.
-- The previous PID implementation was removed. Task 3 must implement the assignment equation and coordinate the 0.3 m/s demonstration with Task 4.
-- Launch and packaging support are retained so the template can start in a ROS 2 environment. Robot verification and experimental plots remain pending.
+- Joystick axes, button edges, mode selection, and R1 override live in `lab_one_controller.py`. No separate joystick or odometry module is needed.
+- The controller subscribes to Joy, Odometry, and IrIntensityVector using sensor-data QoS. The timer publishes one selected velocity command per tick; startup is STOP and shutdown sends zero.
+- L1 selects WANDER; L2 selects CRUISE, initially at 0.3 m/s. Cruise buttons select 0.0, 0.1, 0.2, and 0.4 m/s. R1 temporarily overrides and ignores mode/speed changes while held.
+- `PidSpeedController` now contains the supplied target-speed-plus-PID formula, integral clamp, conditional anti-windup, and reset logic. Confirm the assignment's expected equation before marking Task 3 complete.
+- The existing IR and wandering modules are unchanged. Threshold 35, sensor indices 1–4, recorded samples, and turn settings remain in `lab_config.py`.
+- Stale/invalid sensor data stops the corresponding behavior. Stale joystick data stops an R1 override; autonomous modes continue according to their own sensor freshness checks.
+- The supplied Word plan remains planning material. This checklist and the workspace README describe the current implementation.
+- ROS build/launch, physical trials, recordings, plots, and the 0.3 m/s demonstration still require Ubuntu/TurtleBot validation. Offline tests are not robot test results.
 
 ## Remaining acceptance checklist
 

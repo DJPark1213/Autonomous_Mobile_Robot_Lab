@@ -1,11 +1,11 @@
-"""Launch the intentionally inert Task 4 integration scaffold."""
+"""Launch the combined Lab 1 controller in STOP mode."""
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    """Start the scaffold without enabling any robot movement."""
+    """Start sensor subscriptions and the combined command publisher."""
     return LaunchDescription([
         Node(
             package='py_amr_ttb',

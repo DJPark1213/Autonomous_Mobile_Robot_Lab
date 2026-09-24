@@ -1,44 +1,57 @@
 # ECE 4060 AMR workspace
 
-This source-only ROS 2 workspace reflects the team plan: standalone joystick
-teleoperation is done; Task 2 IR processing and wandering are implemented for
-offline testing with controller hooks prepared for future integration. Tasks
-3-4 remain incomplete. Task 2 still needs physical tuning and verification on
-TurtleBot 10. The provided timed-turn example and existing package support
-files are retained.
+The combined controller now connects the existing IR/wandering code to the
+supplied joystick mode selection and cruise PID logic. It starts in STOP and
+publishes zero velocity until a mode is selected. Physical validation, bags,
+and plots remain pending.
 
-The Python package is `src/py_amr_ttb`. Joystick input methods now live
-directly in `LabOneController`; no separate joystick helper module is needed.
-The Part 2 modules validate IR messages, reject stale data, and implement the
-drive-stop-random-turn-drive sequence. The TurtleBot 4 IR message fields and
-six-sensor order are confirmed; physical behavior still needs validation.
-The PID still returns `0.0`, and the integrated joystick methods still return
-zero `Twist` commands. The combined node constructs the Part 2 objects and
-exposes `ir_callback()` and `wander_command()` hooks, but its subscription,
-timer, and velocity publisher are intentionally commented out until the full
-integration is ready.
+## Controls
 
-`lab_config.py` retains the known joystick mappings and scales needed by the
-completed standalone node. Part 2 speed, timeout, turn timing, sensor indices,
-threshold direction, and threshold are grouped there for robot-side tuning.
-Required PID gains are constants only.
+- L1 selects WANDER and resets its drive/turn state.
+- L2 selects CRUISE, initially at 0.3 m/s. Subsequent entries retain the last target.
+- In CRUISE: Square = 0.1, Triangle = 0.2, Circle = 0.4, X = 0.0 m/s.
+- Holding R1 temporarily selects teleoperation; releasing it restores the
+  selected mode. Mode and speed button selections are ignored while R1 is held.
 
-## Build on Ubuntu with ROS 2
+Joystick logic lives directly in `lab_one_controller.py`. The existing
+`IrSensorState` and `WanderBehavior` handle obstacle detection and wandering.
+`PidSpeedController` owns cruise calculation/history; it implements the pasted
+equation `target + Kp*error + Ki*integral + Kd*derivative`, including integral
+limits and conditional anti-windup. This is not the handout's incremental
+output equation; confirm the required form before final acceptance.
+
+The timer is the sole normal command publisher; shutdown also sends a zero
+command. Missing/stale IR stops wandering, missing/stale odometry stops cruise,
+and missing/stale or non-finite joystick axes stop an R1 override. X in cruise
+clears PID memory and commands zero even without odometry. Clock jumps or long
+timer gaps reset PID timing. Autonomous modes use their sensor timeouts and
+do not require a continuous joystick stream; a stale held R1 remains stopped
+until a fresh release message arrives.
+
+`lab_config.py` holds topics, axes, scales, timing, PID limits, and the existing
+IR calibration. Threshold 35 and front sensor indices 1–4 are retained.
+
+## Build and run on Ubuntu
 
 ```bash
 cd ~/amr_ws
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install --packages-select py_amr_ttb
 source install/setup.bash
-ros2 pkg executables py_amr_ttb
-```
-
-Launch the inert integration scaffold:
-
-```bash
 ros2 launch py_amr_ttb py_lab_one_controller.launch.py
 ```
 
-This node does not subscribe, publish, or move the robot. ROS dependencies
-must still be installed; no local substitute drivers are included.
+This launch is active, not an idle template. Start with wheels raised and run
+only one motion controller: do not run `lab_one_joystick` or `ttb_turn` alongside
+the combined node. Verify ROS topic types/QoS and stop/override behavior before
+floor trials. ROS 2 and the dependencies in `package.xml` must be installed.
 
+## Offline checks
+
+```bash
+python3 -m unittest discover -s src/py_amr_ttb/test -p test_controller_logic.py -v
+```
+
+These tests use ROS interface doubles and the real behavior modules. They do
+not validate discovery, QoS, message transport, or physical robot behavior.
+Run the ROS package checks and robot trials separately on Ubuntu.

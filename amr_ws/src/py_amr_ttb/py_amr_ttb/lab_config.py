@@ -1,8 +1,8 @@
-"""Known teleoperation settings and shared configuration placeholders."""
+"""Shared robot settings for teleoperation, wandering, and cruise."""
 
 
 class LabConfig:
-    """Keep verified mappings; fill pending sections with the task owners."""
+    """Hold robot mappings, calibration, timing, and controller limits."""
 
     # Task 4: known robot namespace and joystick mapping; verify axis signs.
     ROBOT_NAMESPACE = '/TTB10'
@@ -34,6 +34,7 @@ class LabConfig:
     WANDER_TURN_MAX_TIME = 1.8
     SENSOR_TIMEOUT = 0.5
     CONTROL_PERIOD = 0.1
+    JOYSTICK_TIMEOUT = 0.5
 
     # Confirmed TurtleBot 4 IrIntensityVector data and sensor order.
     # The overall message frame is `base_link`:
@@ -51,7 +52,10 @@ class LabConfig:
     IR_OBSTACLE_WHEN_ABOVE_THRESHOLD = True
     IR_FRONT_SENSOR_INDICES = (1, 2, 3, 4)
 
-    # Task 3: required gains; TODO: implement PID and choose limits.
+    # Required gains and supplied implementation limits; verify on the robot.
     KP = 0.1
     KI = 0.001
     KD = 0.03
+
+    PID_INTEGRAL_LIMIT = 1.0
+    CRUISE_MAX_COMMAND = 0.5
