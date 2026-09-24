@@ -9,6 +9,13 @@ from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Joy
 from nav_msgs.msg import Odometry
 from irobot_create_msgs.msg import IrIntensityVector
+"""Run Task 2 autonomous wandering."""
+
+import rclpy
+from geometry_msgs.msg import Twist
+from irobot_create_msgs.msg import IrIntensityVector
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 
 from py_amr_ttb.ir_sensor import IrSensorState
 from py_amr_ttb.lab_config import LabConfig

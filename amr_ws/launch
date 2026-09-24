@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -e
+
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <launch_file_name>"
+  echo "Example: $0 py_ttb_turn.launch.py"
+  exit 1
+fi
+
+LAUNCH_FILE="$1"
+WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+cd "$WORKSPACE_DIR"
+colcon build
+source install/setup.bash
+ros2 launch py_amr_ttb "$LAUNCH_FILE"
