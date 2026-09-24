@@ -1,22 +1,26 @@
-"""Known teleoperation settings and shared configuration placeholders."""
+"""Shared configuration for the Lab 1 robot controllers."""
 
 
 class LabConfig:
-    """Keep verified mappings; fill pending sections with the task owners."""
+    """Store ROS topics, joystick mappings, and controller parameters."""
 
-    # Task 4: known robot namespace and joystick mapping; verify axis signs.
     ROBOT_NAMESPACE = '/TTB10'
+
     JOY_TOPIC = ROBOT_NAMESPACE + '/joy'
     ODOM_TOPIC = ROBOT_NAMESPACE + '/odom'
     IR_TOPIC = ROBOT_NAMESPACE + '/ir_intensity'
     CMD_VEL_TOPIC = ROBOT_NAMESPACE + '/cmd_vel'
 
+    # Joystick axis mappings
     LEFT_STICK_HORIZONTAL_AXIS = 0
     LEFT_STICK_VERTICAL_AXIS = 1
     RIGHT_STICK_HORIZONTAL_AXIS = 3
     RIGHT_STICK_VERTICAL_AXIS = 4
+
     FORWARD_AXIS = LEFT_STICK_VERTICAL_AXIS
     TURN_AXIS = RIGHT_STICK_HORIZONTAL_AXIS
+
+    # Joystick button mappings
     BUTTON_CROSS = 0
     BUTTON_CIRCLE = 1
     BUTTON_TRIANGLE = 2
@@ -25,33 +29,41 @@ class LabConfig:
     BUTTON_R1 = 5
     BUTTON_L2 = 6
     BUTTON_R2 = 7
+
+    # Teleoperation settings
     TELEOP_LINEAR_SCALE = 0.5
     TELEOP_ANGULAR_SCALE = 0.2
 
+    # Task 2 autonomous wandering settings
     WANDER_FORWARD_SPEED = 0.3
     WANDER_TURN_SPEED = 0.4
     WANDER_TURN_MIN_TIME = 0.8
     WANDER_TURN_MAX_TIME = 1.8
+
+    # Node timing settings
     SENSOR_TIMEOUT = 0.5
     CONTROL_PERIOD = 0.1
 
-    # Confirmed TurtleBot 4 IrIntensityVector data and sensor order.
-    # The overall message frame is `base_link`:
-    #   0: ir_intensity_left
-    #   1: ir_intensity_front_left
-    #   2: ir_intensity_front_center_left
-    #   3: ir_intensity_front_center_right
-    #   4: ir_intensity_front_right
-    #   5: ir_intensity_right
-    # Only the four forward-facing readings control obstacle detection.
-    # - Clear path: every sensor was below 7.
-    # - Object about 0.1 m ahead: the four front readings were
-    #   [176, 155, 220, 66].
+    # TurtleBot 4 IR sensor order:
+    # 0: left
+    # 1: front left
+    # 2: front center left
+    # 3: front center right
+    # 4: front right
+    # 5: right
+    #
+    # Clear readings were below 7.
+    # Readings near an obstacle at approximately 0.1 m were much higher.
+    IR_FRONT_SENSOR_INDICES = (1, 2, 3, 4)
     IR_OBSTACLE_THRESHOLD = 35
     IR_OBSTACLE_WHEN_ABOVE_THRESHOLD = True
-    IR_FRONT_SENSOR_INDICES = (1, 2, 3, 4)
 
-    # Task 3: required gains; TODO: implement PID and choose limits.
+    # Task 3 PID gains
     KP = 0.1
     KI = 0.001
     KD = 0.03
+
+    # Task 3 target speed and output limits
+    PID_TARGET_SPEED = 0.3
+    PID_MIN_OUTPUT = 0.0
+    PID_MAX_OUTPUT = 0.4
