@@ -1,11 +1,11 @@
-"""Launch the idle Task 4 controller template."""
+"""Launch the intentionally inert Task 4 integration scaffold."""
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    """Start the controller using its registered console executable."""
+    """Start the scaffold without enabling any robot movement."""
     return LaunchDescription([
         Node(
             package='py_amr_ttb',

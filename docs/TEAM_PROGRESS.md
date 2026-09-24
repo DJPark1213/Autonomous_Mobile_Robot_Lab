@@ -1,11 +1,14 @@
 # Lab 1 team progress and ownership
 
-Status transcribed from the supplied cleaned team work plan on September 17, 2026. Owners are unassigned in that plan. Tasks 2–4 now contain basic class/method templates only; their behavior is not implemented. Completed teleoperation is retained.
+Status transcribed from the supplied cleaned team work plan on September 17,
+2026. Owners are unassigned in that plan. Task 2 now contains offline-tested
+IR processing and wandering behavior. Tasks 3-4 still contain basic
+class/method templates only. Completed teleoperation is retained.
 
 | Task | Team status | Owner | Remaining deliverables |
 |---|---|---|---|
 | 1 Joystick teleoperation | Done; standalone file needs cleanup/integration | Not named | Coordinate remaining cleanup with integration lead |
-| 2 Wandering and IR plots | Pending | Unassigned | Calibrated obstacle detection, behavior demonstration, ROS bag, labeled IR plots, calibration notes |
+| 2 Wandering and IR plots | Logic implemented; controller hooks prepared; robot verification pending | Unassigned | Enable integration later, tune turns, demonstrate, record bag, produce plots and notes |
 | 3 Cruise control and speed plots | Pending | Unassigned | Assigned PID equation, 0.3 m/s demonstration, speed plots and setpoint-change tests |
 | 4 State machine and integration | Pending | Unassigned | Combined launch, all transitions, cruise buttons, R1 override/return, zero-speed stop |
 | 5 IR and odometry mapping | Optional; decide later | Unassigned | Separate mapping implementation, map, and assumptions after required work |
@@ -28,11 +31,14 @@ Paths below are relative to `amr_ws/src/py_amr_ttb/`.
 
 Joystick input, button detection, and R1 override belong directly in `lab_one_controller.py`. The separate joystick helper module has been removed; these methods remain TODO templates. The supplied Word plan retains the original proposed file split; this checklist reflects the updated structure.
 
-- `LabOneController` starts as an idle ROS node; it has no subscriptions, mode logic, or command publisher.
-- `LabOneController.teleop_command()` and `WanderBehavior.command()` return zero commands with a pending-task message. `PidSpeedController.update()` returns `0.0`.
-- `IrSensorState` reports data as unavailable and defaults to blocked until implemented.
+- `LabOneController` starts as an inert scaffold. It constructs the Part 2 objects and exposes `ir_callback()` and `wander_command()`, while the future subscription, timer, and publisher remain commented out for Task 4.
+- `LabOneController.teleop_command()` returns a zero command with a pending-task message. `PidSpeedController.update()` returns `0.0`.
+- `IrSensorState` validates readings and applies configurable sensor selection and threshold direction. `WanderBehavior` implements drive, explicit stop, random timed turn, and resume.
+- The confirmed TurtleBot 4 interface is `IrIntensityVector.readings`, with `IrIntensity.header` and `IrIntensity.value`; malformed or stale data produces a zero command.
 - Known joystick mappings/scales are retained for completed standalone teleoperation. Required PID gains remain constants; calibration and control timing are TODO sections.
-- The IR threshold is unset (`None`). The work plan proposes 120; Task 2 must calibrate it against the 0.1 m requirement.
+- The configured IR threshold is 35 because clear readings were below 7 and the lowest recorded 0.1 m front reading was 66; physical behavior still requires validation.
+- Recorded IR layout: message frame `base_link`; reading order is left, front-left, front-center-left, front-center-right, front-right, right. Part 2 checks indices 1-4.
+- Recorded samples: all clear-path values were below 7; at approximately 0.1 m, the four front readings were 176, 155, 220, and 66. The front-right value means right-side approaches still need verification with threshold 100.
 - The previous PID implementation was removed. Task 3 must implement the assignment equation and coordinate the 0.3 m/s demonstration with Task 4.
 - Launch and packaging support are retained so the template can start in a ROS 2 environment. Robot verification and experimental plots remain pending.
 
