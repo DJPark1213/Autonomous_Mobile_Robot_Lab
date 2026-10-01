@@ -57,8 +57,14 @@ class LabConfig:
     # Clear readings were below 7.
     # Readings near an obstacle at approximately 0.1 m were much higher.
     IR_FRONT_SENSOR_INDICES = (1, 2, 3, 4)
-    IR_OBSTACLE_THRESHOLD = 35
+
+    # Trial thresholds; calibrate using actual obstacle readings.
+    IR_OBSTACLE_THRESHOLD = 15
+    IR_CLEAR_THRESHOLD = 10
     IR_OBSTACLE_WHEN_ABOVE_THRESHOLD = True
+
+    # Require consecutive new clear sensor messages before driving.
+    WANDER_CLEAR_SAMPLES = 3
 
     # Required gains and supplied implementation limits; verify on the robot.
     KP = 0.1
