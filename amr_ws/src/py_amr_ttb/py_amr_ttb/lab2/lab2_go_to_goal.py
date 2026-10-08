@@ -9,6 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Float64
+from scipy.spatial.transform import Rotation
 
 from py_amr_ttb.lab_config import LabConfig
 from py_amr_ttb.pid_speed_controller import PidSpeedController
@@ -73,6 +74,8 @@ class Lab2GoToGoal(Node):
         self.current_y = position.y - self.initial_y
         
         # convert quaternion to euler angle
+        r = Rotation.from_quat([orientation.x, orientation.y, orientation.z, orientation.w])
+        self.current_yaw = r.as_euler('zyx', degrees=False)[0]
 
     def controller_callback(self):
         """Compute and publish velocity until the relative goal is reached."""
