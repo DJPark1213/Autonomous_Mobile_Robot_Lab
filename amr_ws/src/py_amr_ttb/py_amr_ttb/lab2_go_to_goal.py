@@ -11,6 +11,7 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Float64
 
 from py_amr_ttb.lab_config import LabConfig
+from py_amr_ttb.pid_speed_controller import PidSpeedController
 
 
 class Lab2GoToGoal(Node):
@@ -20,6 +21,7 @@ class Lab2GoToGoal(Node):
         super().__init__('lab2_go_to_goal')
 
         self.config = LabConfig
+        self.pid = PidSpeedController(self.config)
         self.initial_x = None
         self.initial_y = None
         self.current_x = 0.0
@@ -65,7 +67,7 @@ class Lab2GoToGoal(Node):
     def controller_callback(self):
         """Compute and publish velocity until the relative goal is reached."""
         command = Twist()
-        
+
 
         return command
 
