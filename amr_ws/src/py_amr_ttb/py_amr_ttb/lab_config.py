@@ -46,6 +46,10 @@ class LabConfig:
     WANDER_TURN_MAX_TIME = 1.8
     WANDER_CLEAR_SAMPLES = 3
 
+    # Lab 2: odometry-relative goal.
+    GOAL_X_OFFSET = 1.5
+    GOAL_Y_OFFSET = 1.5
+
     # Sensor order observed in this robot's IR messages:
     # 0: ir_intensity_side_left
     # 1: ir_intensity_left
