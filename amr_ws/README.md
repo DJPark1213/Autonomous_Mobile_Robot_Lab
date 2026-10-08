@@ -1,5 +1,7 @@
 # ECE 4060 AMR workspace
 
+For Lab 2 assignments and remaining work, see the [repository work plan](../README.md#lab-2-work-plan) and [one-page Word plan](../docs/Lab_2_Team_Work_Plan.docx). Lab 2 nodes and logic live together in `src/py_amr_ttb/py_amr_ttb/lab2/`; Lab 1 task demos live in `demo/` beside it. The Lab 1 instructions follow below.
+
 The combined controller now connects the existing IR/wandering code to the
 supplied joystick mode selection and cruise PID logic. It starts in STOP and
 publishes zero velocity until a mode is selected. Physical validation, bags,

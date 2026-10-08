@@ -1,3 +1,65 @@
+# Autonomous Mobile Robot Lab
+
+## Lab 2 work plan
+
+**Due October 15, 2026 in lab.** Reuse the existing `lab_config.py`.
+
+[Download the one-page Lab 2 team plan](docs/Lab_2_Team_Work_Plan.docx). The plan reflects the current layout and marks future files as planned.
+
+| Owner | Assigned work | Remaining implementation |
+| --- | --- | --- |
+| Aiden | Task 1: go to goal | Complete the odometry and control callbacks in `lab2_go_to_goal.py`. Reach (1.5 m, 1.5 m) relative to the start, stop, and verify with odometry and rqt_plot. The node skeleton and launch file exist. |
+| Hammouh | Task 2: square navigation | Implement the four-corner route using stop, turn, and go. Use position and heading feedback for turns and waypoint changes, not timed turns. |
+| Jianyu | Task 3: circle tracking | Implement the circle and the pursuit method taught in class, including path progress and lap completion. |
+| DJ | Extra: interesting shape | Implement an interesting shape and produce an x-y plot from measured odometry. |
+| DJ | Shared utilities and demonstrations | Implement `odom_utils.py`, coordinate all task demos and launch files, and extract shared navigation logic later. |
+
+### Current layout
+
+Paths are relative to `amr_ws/src/py_amr_ttb/`:
+
+```text
+py_amr_ttb/
+  lab_config.py                 existing shared settings
+  odom_utils.py                 planned, DJ
+  lab2/
+    lab2_go_to_goal.py           Aiden's node and logic, unfinished
+    README.md                   Lab 2 folder guide
+    ...                         remaining Lab 2 nodes to be added
+  demo/
+    task1_teleop.py              existing Lab 1 demos
+    task2_wander.py
+    task3_pid.py
+    task4_state_machine.py
+launch/
+  lab2_go_to_goal.launch.py      existing Lab 2 task 1 launch
+  ...                           existing Lab 1 launch files
+setup.py                        executable registration
+```
+
+Keep Lab 2 ROS nodes and navigation logic together in `lab2/` for now.
+DJ will extract shared logic later. Lab 1 task demos remain in `demo/`.
+Launch files stay in `launch/`; update `setup.py` when adding or moving an executable.
+
+### Team checklist
+
+- [ ] Agree on the initial pose, coordinate axes, and reset convention.
+- [ ] Implement shared odometry conversion and relative pose tracking.
+- [ ] Complete and test task 1, then square and circle navigation.
+- [ ] Verify stopping, stale-odometry handling, and one velocity publisher per run.
+- [ ] Complete DJ's shape extra and save measured trajectory plots.
+- [ ] Rebuild on Ubuntu, verify each launch command, and rehearse the demos.
+
+See the [Lab 2 folder guide](amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/README.md)
+and [Lab 1 demo guide](amr_ws/src/py_amr_ttb/py_amr_ttb/demo/README.md).
+
+Aiden's [go-to-goal node](amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/lab2_go_to_goal.py)
+uses the [existing launch file](amr_ws/src/py_amr_ttb/launch/lab2_go_to_goal.launch.py).
+It starts an unfinished skeleton; navigation
+has not been completed or verified on the robot.
+
+---
+
 # AMR Lab One
 
 ROS 2 Humble + TurtleBot 4 implementation of:

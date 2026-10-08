@@ -1,4 +1,4 @@
-"""Install the Lab 1 Python package and launch files."""
+"""Install the robot laboratory Python package and launch files."""
 
 from glob import glob
 import os
@@ -34,19 +34,19 @@ setup(
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='BrodyBrody41@gmail.com',
-    description='ROS 2 controllers for AMR Lab 1.',
+    description='ROS 2 controllers for AMR Labs 1 and 2.',
     license='TODO',
     extras_require={
         'test': ['pytest'],
     },
     entry_points={
         'console_scripts': [
-            'task1_teleop = py_amr_ttb.task1_teleop:main',
-            'task2_wander = py_amr_ttb.task2_wander:main',
-            'task3_pid = py_amr_ttb.task3_pid:main',
-            'task4_state_machine = py_amr_ttb.task4_state_machine:main',
+            'task1_teleop = py_amr_ttb.demo.task1_teleop:main',
+            'task2_wander = py_amr_ttb.demo.task2_wander:main',
+            'task3_pid = py_amr_ttb.demo.task3_pid:main',
+            'task4_state_machine = py_amr_ttb.demo.task4_state_machine:main',
             'lab_one_controller = py_amr_ttb.lab_one_controller:main',
-            'lab2_go_to_goal = py_amr_ttb.lab2_go_to_goal:main',
+            'lab2_go_to_goal = py_amr_ttb.lab2.lab2_go_to_goal:main',
         ],
     },
 )
