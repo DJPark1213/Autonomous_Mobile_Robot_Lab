@@ -63,6 +63,16 @@ class Lab2GoToGoal(Node):
         """Record the latest pose and publish it for rqt_plot."""
         position = message.pose.pose.position
         orientation = message.pose.pose.orientation
+        velocity = message.twist.twist.linear
+        
+        if self.initial_x is None:
+            self.initial_x = position.x
+            self.initial.y = position.y
+        
+        self.current_x = position.x - self.initial_x
+        self.current_y = position.y - self.initial_y
+        
+        # convert quaternion to euler angle
 
     def controller_callback(self):
         """Compute and publish velocity until the relative goal is reached."""
