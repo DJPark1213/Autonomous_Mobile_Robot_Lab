@@ -1,4 +1,4 @@
-"""DJ extra: trace a five-point star with odometry waypoint feedback."""
+"""Trace five-point star with odometry waypoint feedback."""
 
 import math
 import time
@@ -19,7 +19,6 @@ from py_amr_ttb.lab2.navigation import waypoint_command, shape_waypoints
 
 
 class Lab2Shape(Node):
-    """DJ extra: trace a five-point star with odometry waypoint feedback."""
 
     def __init__(self):
         super().__init__('lab2_shape')
