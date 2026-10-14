@@ -1,22 +1,153 @@
-# Lab 2
+# Lab 2 developer and demonstration guide
 
-Lab 2 nodes and their navigation logic live together here for now.
-Aiden owns [lab2_go_to_goal.py](lab2_go_to_goal.py); its odometry and control callbacks still need
-implementation. DJ will extract shared logic later.
+Goal, square, and DJ's five-point star are implemented. Physical validation
+is pending. Circle pursuit and lap completion remain Jianyu's work.
+The original Word plan predates this implementation; see
+[the current handoff](../../../../../docs/LAB2_HANDOFF.md).
 
-Shared configuration remains in `py_amr_ttb/lab_config.py`. Launch files remain
-in the package's `launch/` directory. The executable mapping is:
+## Starting frame and reset
 
-```text
-lab2_go_to_goal = py_amr_ttb.lab2.lab2_go_to_goal:main
-```
+The first valid odometry pose defines (0 m, 0 m, 0 rad). Positive x points
+along the initial heading, positive y points left, and positive yaw is
+counterclockwise. These axes stay fixed. Goal (1.5, 1.5) means forward 1.5 m
+and left 1.5 m from the start. Square uses (L, 0), (L, L), (0, L), (0, 0).
+The star starts at its bottom tip, visits alternating outer tips, and returns
+to (0, 0); default radius is 0.75 m. It uses stop/turn/go, not circle pursuit.
 
-After rebuilding and sourcing the Ubuntu workspace, the launch command is unchanged:
+An odometry reset is optional: nonzero raw odometry works too. Stop all motion
+controllers, keep the robot still, optionally reset with its supported bash
+service call, wait for fresh odometry, then launch the task. Stop/relaunch to
+capture a new origin. Never reset odometry while a task runs.
+
+On the robot, inspect available services and their actual type before calling:
 
 ```bash
-ros2 launch py_amr_ttb lab2_go_to_goal.launch.py
+ros2 service list -t
+# For the discovered reset service:
+ros2 service type /ACTUAL_SERVICE_NAME
+ros2 interface show ACTUAL_PACKAGE/srv/ACTUAL_TYPE
 ```
 
-This starts the current skeleton, not a completed navigation demonstration.
+No reset service endpoint is assumed or called by our nodes. The
+[Create 3 documentation](https://iroboteducation.github.io/create3_docs/api/ros2/)
+describes service discovery. Firmware supports different interfaces; verify the
+installed robot. Plain bash `reset` only resets the terminal.
 
-See the [team work plan](../../../../../README.md#lab-2-work-plan), [Word plan](../../../../../docs/Lab_2_Team_Work_Plan.docx), and [task 1 launch file](../../launch/lab2_go_to_goal.launch.py).
+## What moved and how teammates use it
+
+| File/helper | Interface and purpose |
+| --- | --- |
+| `py_amr_ttb/odom_utils.py` | Pure pose math; no ROS runtime import |
+| `quaternion_to_yaw(q)` | Unit quaternion -> yaw radians; general math helper |
+| `read_planar_pose(message)` | Odometry -> finite `(x, y, yaw)`; normalizes quaternion, raises ValueError on invalid pose |
+| `relative_pose(x, y, yaw, initial_x, initial_y, initial_yaw)` | World pose -> fixed starting-frame `(x, y, yaw)`; meters/radians |
+| `normalize_angle(angle)` | Wrap radians into [-pi, pi] |
+| `odometry_is_fresh(now, last_received, timeout)` | Monotonic receipt seconds -> boolean; None means no valid pose |
+| `lab2/navigation.py: waypoint_command(...)` | `(x, y, yaw, target_x, target_y, config)` -> `(linear, angular, reached)`; caller publishes Twist |
+| `square_waypoints(side)` / `shape_waypoints(radius)` | Starting-frame coordinates for control and intended-route plotting |
+| `lab_config.py` | Topics, timing, NAV_* settings, GOAL_* offsets, SQUARE_SIDE_LENGTH, SHAPE_RADIUS |
+
+Each node owns its publisher/subscriber/timer and runtime state explicitly in
+`__init__`. Initial/current pose, last receipt time, waypoint index, and completion
+state remain on the node. There is no shared ROS base class. Shared math has
+meaningful offline tests and can be reused by circle without taking its control
+logic away from Jianyu.
+
+The odometry callback validates pose, captures the origin once, transforms the
+pose, updates receipt time, and publishes x/y/yaw/distance diagnostics. The timer
+publishes zero before a valid pose, after completion, on invalid data, or after
+SENSOR_TIMEOUT (0.5 s) without valid receipt. Valid data resumes an unfinished
+route. Age is measured at local callback receipt, not the sensor timestamp;
+this does not detect a publisher repeatedly sending a frozen pose. Shutdown
+sends a zero command when the ROS context is still available.
+
+Go-to-goal and square use the same distance/heading controller. It turns in
+place outside the yaw tolerance; inside the tolerance it drives with heading
+correction. Speed decreases with target distance. Reaching a corner publishes
+zero and advances only one target. Arrival does not require a final heading.
+Circle needs its own taught pursuit algorithm, path progress and lap detection.
+
+## Ubuntu build and launch
+
+Run from the ROS workspace on the robot laptop; adjust checkout paths as needed.
+
+```bash
+source /opt/ros/humble/setup.bash
+cd ~/amr_ws
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install --packages-select py_amr_ttb
+source install/setup.bash
+# Select ONE controller:
+ros2 launch py_amr_ttb lab2_go_to_goal.launch.py
+# ros2 launch py_amr_ttb lab2_square.launch.py
+# ros2 launch py_amr_ttb lab2_shape.launch.py
+```
+
+Default topics are `/TTB10/odom` and `/TTB10/cmd_vel`. Run one controller at
+a time. Check `ros2 topic info /TTB10/cmd_vel --verbose` and stop unintended
+publishers. Stop a task with Ctrl+C. Launches for existing tasks are installed by
+setup.py; circle registration/launch follows its implementation.
+
+In another sourced terminal, inspect time-series diagnostics:
+
+```bash
+ros2 run rqt_plot rqt_plot /TTB10/lab2_go_to_goal/x/data /TTB10/lab2_go_to_goal/y/data /TTB10/lab2_go_to_goal/distance/data
+```
+
+Square/star diagnostics use `lab2_square` / `lab2_shape` in the same topic path.
+The diagnostics only publish upon valid odometry; velocity stops still run on
+the timer if odometry disappears. Save a screenshot of actual rqt_plot results.
+
+## Record and plot measured trajectories
+
+The recorder/plotter is a checkout script, not a ROS executable. Commands below
+run from the repository root; keep `amr_ws/scripts` when copying the workspace.
+Matplotlib is declared as the package's `python3-matplotlib` dependency. Standalone
+plotting outside ROS needs matplotlib installed in that Python environment.
+
+Start recording while stationary, wait for valid odometry, then launch the
+controller in another terminal. Both capture the same stationary starting pose.
+Use a unique run name to preserve earlier data. Ctrl+C ends CSV recording.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/amr_ws/install/setup.bash
+python3 amr_ws/scripts/plot_lab2.py --record output/lab2/goal_run01.csv
+# Optional: --duration 120 (seconds), --topic /TTB10/odom
+```
+
+Then plot the actual recording:
+
+```bash
+python3 amr_ws/scripts/plot_lab2.py --csv output/lab2/goal_run01.csv --route goal --output output/lab2/goal_run01.png
+# For other runs: --route square or --route shape
+```
+
+CSV preserves raw odometry and starting-frame x/y/yaw. Plotting saves an equal-axis
+PNG plus a JSON summary of measured duration, path length, and final distance to
+the last waypoint. Returning to the final point alone does not prove every
+corner was visited. The overlay uses current LabConfig: preserve the settings
+used for each run alongside its measurements if you tune between runs.
+
+For raw ROS transport evidence, additionally record in another terminal:
+
+```bash
+mkdir -p output/lab2
+ros2 bag record -o output/lab2/goal_run01_bag /TTB10/odom /TTB10/cmd_vel
+```
+
+Stop recording after the task stops. CSV plots use measured data, never generated
+commands. No physical recordings or measured plots exist yet.
+
+## Offline checks
+
+From the repository root:
+
+```bash
+python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p 'test_controller_logic.py' -v
+python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p 'test_odom_utils.py' -v
+python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p 'test_lab2_*.py' -v
+```
+
+Tests use ROS doubles, pure geometry and ideal kinematics. Ubuntu colcon checks,
+message types/QoS, real stopping, wheel slip and accuracy require the robot.
