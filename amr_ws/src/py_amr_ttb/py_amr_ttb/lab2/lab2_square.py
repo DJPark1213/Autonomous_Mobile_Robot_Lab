@@ -10,7 +10,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from py_amr_ttb.lab_config import LabConfig
 
-"""Navigate a square using stop, turn, and go."""
+"""Navigate the square"""
 class Lab2Square(Node):
     
 
@@ -18,18 +18,15 @@ class Lab2Square(Node):
         super().__init__('lab2_square')
 
         self.config = LabConfig
-
-        # Initial robot pose
         self.initial_x = None
         self.initial_y = None
         self.initial_yaw = None
 
-        # Current robot pose
         self.current_x = 0.0
         self.current_y = 0.0
         self.current_yaw = 0.0
 
-        # Square dimensions and controller parameters
+        # Square and controller parameters
         self.side_length = 1.0
         self.position_tolerance = 0.05
         self.yaw_tolerance = 0.10
@@ -38,35 +35,21 @@ class Lab2Square(Node):
         self.linear_gain = 1.0
         self.angular_gain = 2.0
 
-        # Waypoint tracking
+        # Waypoint 
         self.waypoints = []
         self.waypoint_index = 0
         self.goal_reached = False
 
         # Velocity publisher
-        self.publisher = self.create_publisher(
-            Twist,
-            self.config.CMD_VEL_TOPIC,
-            10,
-        )
+        self.publisher = self.create_publisher(Twist, self.config.CMD_VEL_TOPIC, 10,)
 
         # Odometry subscriber
-        self.odom_subscription = self.create_subscription(
-            Odometry,
-            self.config.ODOM_TOPIC,
-            self.odom_callback,
-            qos_profile_sensor_data,
-        )
+        self.odom_subscription = self.create_subscription(Odometry, self.config.ODOM_TOPIC, self.odom_callback, qos_profile_sensor_data,)
 
         # Controller timer
-        self.timer = self.create_timer(
-            self.config.CONTROL_PERIOD,
-            self.controller_callback,
-        )
+        self.timer = self.create_timer(self.config.CONTROL_PERIOD, self.controller_callback,)
 
-        self.get_logger().info(
-            'Lab 2 Task 2: Square navigation started.'
-        )
+        self.get_logger().info('Square navigation started.')
 
     def odom_callback(self, message):
         """Read robot position and orientation from odometry."""
@@ -75,12 +58,9 @@ class Lab2Square(Node):
         q = message.pose.pose.orientation
 
         # Convert quaternion to yaw angle
-        yaw = math.atan2(
-            2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y*q.y + q.z*q.z),
-        )
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y*q.y + q.z*q.z),)
 
-        # Save initial position and heading
+        # Save initial position
         if self.initial_x is None:
             self.initial_x = position.x
             self.initial_y = position.y
@@ -91,12 +71,7 @@ class Lab2Square(Node):
             c = math.cos(yaw)
             s = math.sin(yaw)
 
-            self.waypoints = [
-                (L*c, L*s),
-                (L*c - L*s, L*s + L*c),
-                (-L*s, L*c),
-                (0.0, 0.0),
-            ]
+            self.waypoints = [(L*c, L*s),(L*c - L*s, L*s + L*c),(-L*s, L*c),(0.0, 0.0),]    # 4 Corners
 
         # Position relative to starting point
         self.current_x = position.x - self.initial_x
@@ -108,92 +83,62 @@ class Lab2Square(Node):
 
         command = Twist()
 
-        # Wait until odometry is available
+        # Wait for odometry to be available
         if self.initial_x is None:
             return
 
-        # Stop after all four corners
+        # Stop 
         if self.goal_reached:
             self.publisher.publish(command)
             return
 
-        # Current target waypoint
-        target_x, target_y = self.waypoints[
-            self.waypoint_index
-        ]
+        # Current target w
+        target_x, target_y = self.waypoints[self.waypoint_index]
 
-        dx = target_x - self.current_x
-        dy = target_y - self.current_y
+        dx = target_x -self.current_x
+        dy = target_y -self.current_y
 
         distance = math.hypot(dx, dy)
 
-        # Check whether the current corner was reached
+        # Check if the current corner is reached
         if distance <= self.position_tolerance:
-
             self.publisher.publish(command)
-
-            self.get_logger().info(
-                f'Corner {self.waypoint_index + 1} reached.'
-            )
+            self.get_logger().info(f'Corner {self.waypoint_index + 1} reached.')
 
             self.waypoint_index += 1
 
             if self.waypoint_index >= len(self.waypoints):
                 self.goal_reached = True
-                self.get_logger().info(
-                    'Square navigation completed!'
-                )
+                self.get_logger().info('Square navigation completed!')
 
             return
 
-        # Desired direction to waypoint
+        # Desired direction 
         target_yaw = math.atan2(dy, dx)
 
         # Normalize angular error to [-pi, pi]
-        yaw_error = math.atan2(
-            math.sin(target_yaw - self.current_yaw),
-            math.cos(target_yaw - self.current_yaw),
-        )
+        yaw_error = math.atan2( math.sin(target_yaw - self.current_yaw), math.cos(target_yaw - self.current_yaw),)
 
-        # Step 1: Rotate toward waypoint
+        # Rotate toward waypoint
         if abs(yaw_error) > self.yaw_tolerance:
 
             command.linear.x = 0.0
 
-            command.angular.z = max(
-                -self.max_angular_speed,
-                min(
-                    self.max_angular_speed,
-                    self.angular_gain * yaw_error,
-                ),
-            )
+            command.angular.z = max(-self.max_angular_speed, min(self.max_angular_speed, self.angular_gain * yaw_error,),)
 
-        # Step 2: Drive toward waypoint
+        # Drive to waypoint
         else:
-            command.linear.x = min(
-                self.max_linear_speed,
-                self.linear_gain * distance,
-            )
+            command.linear.x = min(self.max_linear_speed, self.linear_gain * distance,)
 
-            command.angular.z = max(
-                -self.max_angular_speed,
-                min(
-                    self.max_angular_speed,
-                    self.angular_gain * yaw_error,
-                ),
-            )
+            command.angular.z = max(-self.max_angular_speed, min(self.max_angular_speed,self.angular_gain * yaw_error,),)
 
-        # Publish velocity command
+        # Publish velocity
         self.publisher.publish(command)
 
-
 def main(args=None):
-    """Start the square navigation controller."""
+    """Square navigation controller."""
 
-    rclpy.init(
-        args=args,
-        signal_handler_options=SignalHandlerOptions.NO,
-    )
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO,)
 
     node = None
 
@@ -203,7 +148,6 @@ def main(args=None):
 
     except KeyboardInterrupt:
         pass
-
     finally:
         if node is not None:
             node.timer.cancel()
@@ -215,7 +159,5 @@ def main(args=None):
 
         if rclpy.ok():
             rclpy.shutdown()
-
-
 if __name__ == '__main__':
     main()
