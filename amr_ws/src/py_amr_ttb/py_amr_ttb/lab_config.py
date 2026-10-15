@@ -49,6 +49,15 @@ class LabConfig:
     # Lab 2: odometry-relative goal.
     GOAL_X_OFFSET = 1.5
     GOAL_Y_OFFSET = 1.5
+    NAV_POSITION_TOLERANCE = 0.05
+    NAV_YAW_TOLERANCE = 0.10
+    NAV_MAX_LINEAR_SPEED = 0.20
+    NAV_MAX_ANGULAR_SPEED = 0.40
+    NAV_LINEAR_GAIN = 1.0
+    NAV_ANGULAR_GAIN = 2.0
+    SQUARE_SIDE_LENGTH = 1.0
+    # DJ's extra: five-point star, in meters, starting at its bottom tip.
+    SHAPE_RADIUS = 0.75
 
     # Sensor order observed in this robot's IR messages:
     # 0: ir_intensity_side_left
