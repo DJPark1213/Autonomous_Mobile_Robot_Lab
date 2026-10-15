@@ -47,6 +47,7 @@ setup(
             'task4_state_machine = py_amr_ttb.demo.task4_state_machine:main',
             'lab_one_controller = py_amr_ttb.lab_one_controller:main',
             'lab2_go_to_goal = py_amr_ttb.lab2.lab2_go_to_goal:main',
+            'lab2_square = py_amr_ttb.lab2.lab2_square:main',
         ],
     },
 )

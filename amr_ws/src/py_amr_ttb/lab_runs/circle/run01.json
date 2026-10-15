@@ -1,0 +1,13 @@
+{
+  "source_csv": "/home/ubuntu/amr_ws/src/py_amr_ttb/amr_ws/src/py_amr_ttb/lab_runs/circle/run01.csv",
+  "samples": 4489,
+  "duration_s": 224.5400414830001,
+  "radius_m": 0.75,
+  "direction": 1,
+  "measured_path_length_m": 4.729070869779847,
+  "closure_error_m": 0.012970132205115923,
+  "radial_rmse_m": 0.007759020320964733,
+  "radial_max_abs_error_m": 0.030451598876729213,
+  "directed_laps_from_odometry": 1.0025327621095692,
+  "note": "Odom-relative errors, not independent ground truth. Unwrapping assumes consecutive poses advance less than pi radians."
+}
