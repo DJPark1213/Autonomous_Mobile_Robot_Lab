@@ -56,8 +56,7 @@ class LabConfig:
     NAV_LINEAR_GAIN = 1.0
     NAV_ANGULAR_GAIN = 2.0
     SQUARE_SIDE_LENGTH = 1.0
-    # DJ's extra: five-point star, in meters, starting at its bottom tip.
-    SHAPE_RADIUS = 0.75
+    SHAPE_RADIUS = 0.45
 
     # Sensor order observed in this robot's IR messages:
     # 0: ir_intensity_side_left
