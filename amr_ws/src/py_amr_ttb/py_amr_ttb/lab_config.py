@@ -51,7 +51,7 @@ class LabConfig:
     GOAL_Y_OFFSET = 1.5
     NAV_POSITION_TOLERANCE = 0.05
     NAV_YAW_TOLERANCE = 0.10
-    NAV_MAX_LINEAR_SPEED = 0.20
+    NAV_MAX_LINEAR_SPEED = 0.40
     NAV_MAX_ANGULAR_SPEED = 0.40
     NAV_LINEAR_GAIN = 1.0
     NAV_ANGULAR_GAIN = 2.0
@@ -61,7 +61,7 @@ class LabConfig:
 
     # Heart: full lateral width, continuous tracking with a stop at the notch.
     HEART_WIDTH = 1.0
-    HEART_SPEED = 0.08
+    HEART_SPEED = 0.40
     HEART_LOOKAHEAD = 0.12
     HEART_POSITION_TOLERANCE = 0.03
     HEART_CUSP_STOP_TIME = 0.30
