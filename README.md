@@ -2,6 +2,11 @@
 
 ## Lab 2 work plan
 
+The optional heart task is implemented separately from the star. See the
+[heart guide](amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/HEART_README.md).
+Its smooth curves, sharp-point stops and completion pass offline simulation;
+Ubuntu build and heart robot validation remain pending.
+
 **Due October 15, 2026 in lab (team plan).** The instructor's detailed Lab 2
 assignment is not in the saved slides; confirm dimensions and pursuit requirements.
 
@@ -9,8 +14,8 @@ assignment is not in the saved slides; confirm dimensions and pursuit requiremen
 | --- | --- | --- |
 | DJ (handoff from Aiden) | Task 1: go to goal | Implemented, including relative pose, stop/turn/go, completion stop and odometry checks; robot validation pending |
 | Hammouh | Task 2: square | Original route behavior refactored onto shared utilities; executable/launch available; owner tuning and robot demonstration pending |
-| Jianyu | Task 3: circle | Pursuit and lap completion remain to be implemented by owner; executable/launch registration follows that implementation |
-| DJ | Extra: interesting shape | Five-point star implemented with waypoint feedback; robot run and measured plot pending |
+| Jianyu | Task 3: circle | Circle pursuit, lap stopping and module launch are present; circle recordings are included |
+| DJ | Extra: interesting shape | Renamed to lab2_star; radius 0.45 m retained; robot movement reported by team, saved star trajectory still pending |
 | DJ | Shared support | Pose utilities, configuration, waypoint math, launches for existing tasks, CSV recorder, plotting, offline checks and handoff guide implemented |
 
 See the [Lab 2 developer and demo guide](amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/README.md)
@@ -19,7 +24,7 @@ and [current checklist](docs/LAB2_HANDOFF.md). The
 it predates the current implementation and go-to-goal handoff to DJ.
 
 Lab 2 nodes remain in `py_amr_ttb/lab2/`, shared pose utilities in
-`py_amr_ttb/odom_utils.py`, launch files in `launch/`, and recording/plotting
+`py_amr_ttb/odom_utils.py`, launch files in `amr_ws/src/py_amr_ttb/launch/`, and recording/plotting
 in `amr_ws/scripts/plot_lab2.py`. Shared settings remain in `lab_config.py`.
 Existing Lab 1 demos remain in `demo/`.
 
@@ -27,11 +32,13 @@ Existing Lab 1 demos remain in `demo/`.
 - [x] Implement shared math/configuration and refactor existing nodes.
 - [x] Complete go-to-goal and DJ's star implementation.
 - [x] Add launch integration for available tasks and measured-data plotting tools.
-- [ ] Complete circle pursuit and lap detection (Jianyu).
+- [x] Integrate circle pursuit and lap detection (Jianyu); recorded circle CSVs are included.
 - [ ] Confirm instructor specifications; build and check discovery/QoS on Ubuntu.
 - [ ] Tune and demonstrate tasks, verify one velocity publisher, save recordings and measured plots.
 
 Offline checks use ROS doubles and ideal kinematics; they are not robot results.
+See the [pull review and star migration](docs/PULL_REVIEW_2026_10_20.md) and
+[heart proposal](docs/HEART_PROPOSAL.md).
 
 ---
 

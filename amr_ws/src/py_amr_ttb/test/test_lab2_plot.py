@@ -59,6 +59,35 @@ class PlotTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('--duration must be finite and positive', result.stderr)
 
+    @unittest.skipUnless(importlib.util.find_spec('matplotlib'), 'matplotlib required')
+    def test_star_route_cli(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'star_fixture.csv'
+            output = Path(folder) / 'star_fixture.png'
+            self.fixture(source, [(0, 0, 0), (1, .1, .2), (2, 0, 0)])
+            result = self.run_cli('--csv', source, '--route', 'star', '--output', output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.is_file())
+
+    @unittest.skipUnless(importlib.util.find_spec('matplotlib'), 'matplotlib required')
+    def test_heart_route_and_width_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'heart_fixture.csv'
+            output = Path(folder) / 'heart_fixture.png'
+            self.fixture(source, [(0, 0, 0), (1, .3, .2), (2, 0, 0)])
+            result = self.run_cli('--csv', source, '--route', 'heart', '--heart-width', '.6',
+                                  '--output', output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            summary = json.loads(output.with_suffix('.json').read_text())
+            self.assertEqual(summary['route'], 'heart')
+            self.assertEqual(summary['heart_width_m'], .6)
+            self.assertEqual(summary['final_distance_to_last_waypoint_m'], 0)
+
+    def test_invalid_heart_width_rejected(self):
+        result = self.run_cli('--csv', 'unused.csv', '--route', 'heart', '--heart-width', 'nan')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--heart-width must be finite and positive', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

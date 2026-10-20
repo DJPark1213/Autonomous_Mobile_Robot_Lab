@@ -1,5 +1,11 @@
 # Lab 2 handoff and acceptance checklist
 
+Heart extension: implemented in navigation.py + lab2_heart.py with launch,
+configuration, plot overlay and tests. All 44 offline tests pass, including
+heart curve tracking at three widths, notch dwell and recovery from a small
+disturbance. The heart has not been run on the robot by the coding agent.
+See [the heart guide](../amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/HEART_README.md).
+
 DJ owns shared refactoring, go-to-goal completion, launch/plot support, and the
 interesting-shape extra. Hammouh owns square completion/tuning; Jianyu owns
 circle pursuit and lap detection. No teammates have been messaged automatically.
@@ -18,11 +24,11 @@ circle pursuit and lap detection. No teammates have been messaged automatically.
 - [x] Offline rotated-start navigation simulation and invalid/stale/startup/arrival stop checks.
 - [x] Developer explanation and Ubuntu demonstration instructions.
 
-Local verification: 25 offline tests passed (16 existing controller tests,
-4 pose-math tests, 2 Lab 2 callback/simulation tests, and 3 plotting tests).
-Plot rendering was visually checked using a synthetic fixture kept under
-ignored `build/`; it is not a measured robot result. Python syntax and Git
-whitespace checks passed. ROS/ament build and lint checks remain for Ubuntu.
+Current verification and migration details are in
+[PULL_REVIEW_2026_10_20.md](PULL_REVIEW_2026_10_20.md). Star is now `lab2_star`,
+with `STAR_RADIUS = 0.45`, `star_waypoints`, and plot selector `--route star`.
+Circle code and CSV recordings arrived in the pulled changes. Ubuntu build
+and physical checks of this renamed version remain required.
 
 ## Teammate changes
 
@@ -31,13 +37,10 @@ Hammouh: square corners are now simple starting-frame coordinates. Shared
 heading correction and one-tick stop at each corner. Continue tuning and
 demonstrating square; avoid applying the starting-heading rotation twice.
 
-Jianyu: use `read_planar_pose`, `relative_pose`, and `odometry_is_fresh` in the
-circle node, and preserve a single velocity publisher. Circle needs its own
-pursuit/lookahead and progress/lap logic; `waypoint_command` is for stop/turn/go
-routes, not the course's circle pursuit implementation. When the file and
-`main` exist, register `lab2_circle = py_amr_ttb.lab2.lab2_circle:main` in
-`setup.py` and copy an existing launch with executable/name `lab2_circle`.
-DJ can integrate that change. No nonfunctional circle launch is provided.
+Jianyu's circle node, pure pursuit, lap tracking, dedicated config/odometry helpers,
+plotter and launch are integrated. Circle retains independent ownership of its
+controller/math. Its launch executes the module and needs no console-script
+registration. Circle tests now live in package `test/` alongside the other tests.
 
 ## Remaining acceptance work
 
@@ -49,7 +52,8 @@ DJ can integrate that change. No nonfunctional circle launch is provided.
 - [ ] Verify exactly one intended `/TTB10/cmd_vel` publisher per run.
 - [ ] Demonstrate goal arrival; record measured error and the time-series plot.
 - [ ] Hammouh: demonstrate all square corners and return to start.
-- [ ] Jianyu: implement/integrate/demonstrate circle pursuit and lap completion.
+- [x] Jianyu: circle pursuit/lap implementation and recordings are present.
+- [ ] Confirm circle demonstration acceptance against instructor requirements.
 - [ ] DJ: demonstrate star and save measured x-y PNG, CSV and JSON summary.
 - [ ] Rehearse demos and preserve actual recordings under `output/lab2/`.
 

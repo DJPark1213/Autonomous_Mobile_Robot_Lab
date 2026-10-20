@@ -1,7 +1,13 @@
 # Lab 2 developer and demonstration guide
 
-Goal, square, and DJ's five-point star are implemented. Physical validation
-is pending. Circle pursuit and lap completion remain Jianyu's work.
+Heart tracking is now implemented as a separate task with pathing in
+`navigation.py`. See [HEART_README.md](HEART_README.md) for configuration,
+`ros2 run py_amr_ttb lab2_heart`, recording/plotting and robot checks.
+Heart robot validation is pending; existing tasks retain their behavior.
+
+Goal, square, DJ's five-point star, and Jianyu's circle pursuit are implemented.
+The team reports star movement; saved star trajectory/acceptance evidence remains
+pending. Circle CSV recordings are under package `lab_runs/circle/`.
 The original Word plan predates this implementation; see
 [the current handoff](../../../../../docs/LAB2_HANDOFF.md).
 
@@ -12,7 +18,7 @@ along the initial heading, positive y points left, and positive yaw is
 counterclockwise. These axes stay fixed. Goal (1.5, 1.5) means forward 1.5 m
 and left 1.5 m from the start. Square uses (L, 0), (L, L), (0, L), (0, 0).
 The star starts at its bottom tip, visits alternating outer tips, and returns
-to (0, 0); default radius is 0.75 m. It uses stop/turn/go, not circle pursuit.
+to (0, 0); current radius is 0.45 m. It uses stop/turn/go, not circle pursuit.
 
 An odometry reset is optional: nonzero raw odometry works too. Stop all motion
 controllers, keep the robot still, optionally reset with its supported bash
@@ -44,8 +50,8 @@ installed robot. Plain bash `reset` only resets the terminal.
 | `normalize_angle(angle)` | Wrap radians into [-pi, pi] |
 | `odometry_is_fresh(now, last_received, timeout)` | Monotonic receipt seconds -> boolean; None means no valid pose |
 | `lab2/navigation.py: waypoint_command(...)` | `(x, y, yaw, target_x, target_y, config)` -> `(linear, angular, reached)`; caller publishes Twist |
-| `square_waypoints(side)` / `shape_waypoints(radius)` | Starting-frame coordinates for control and intended-route plotting |
-| `lab_config.py` | Topics, timing, NAV_* settings, GOAL_* offsets, SQUARE_SIDE_LENGTH, SHAPE_RADIUS |
+| `square_waypoints(side)` / `star_waypoints(radius)` | Starting-frame coordinates for control and intended-route plotting |
+| `lab_config.py` | Topics, timing, NAV_* settings, GOAL_* offsets, SQUARE_SIDE_LENGTH, STAR_RADIUS |
 
 Each node owns its publisher/subscriber/timer and runtime state explicitly in
 `__init__`. Initial/current pose, last receipt time, waypoint index, and completion
@@ -65,7 +71,8 @@ Go-to-goal and square use the same distance/heading controller. It turns in
 place outside the yaw tolerance; inside the tolerance it drives with heading
 correction. Speed decreases with target distance. Reaching a corner publishes
 zero and advances only one target. Arrival does not require a final heading.
-Circle needs its own taught pursuit algorithm, path progress and lap detection.
+Circle uses its own pursuit algorithm, path progress and lap detection; see
+[CIRCLE_README.md](CIRCLE_README.md).
 
 ## Ubuntu build and launch
 
@@ -80,13 +87,14 @@ source install/setup.bash
 # Select ONE controller:
 ros2 launch py_amr_ttb lab2_go_to_goal.launch.py
 # ros2 launch py_amr_ttb lab2_square.launch.py
-# ros2 launch py_amr_ttb lab2_shape.launch.py
+# ros2 launch py_amr_ttb lab2_star.launch.py
 ```
 
 Default topics are `/TTB10/odom` and `/TTB10/cmd_vel`. Run one controller at
 a time. Check `ros2 topic info /TTB10/cmd_vel --verbose` and stop unintended
 publishers. Stop a task with Ctrl+C. Launches for existing tasks are installed by
-setup.py; circle registration/launch follows its implementation.
+setup.py; circle launches its module through `lab2_circle.launch.py`. All launch files
+are package-local under `amr_ws/src/py_amr_ttb/launch/`, matching setup.py.
 
 In another sourced terminal, inspect time-series diagnostics:
 
@@ -94,7 +102,7 @@ In another sourced terminal, inspect time-series diagnostics:
 ros2 run rqt_plot rqt_plot /TTB10/lab2_go_to_goal/x/data /TTB10/lab2_go_to_goal/y/data /TTB10/lab2_go_to_goal/distance/data
 ```
 
-Square/star diagnostics use `lab2_square` / `lab2_shape` in the same topic path.
+Square/star diagnostics use `lab2_square` / `lab2_star` in the same topic path.
 The diagnostics only publish upon valid odometry; velocity stops still run on
 the timer if odometry disappears. Save a screenshot of actual rqt_plot results.
 
@@ -120,7 +128,7 @@ Then plot the actual recording:
 
 ```bash
 python3 amr_ws/scripts/plot_lab2.py --csv output/lab2/goal_run01.csv --route goal --output output/lab2/goal_run01.png
-# For other runs: --route square or --route shape
+# For other runs: --route square or --route star
 ```
 
 CSV preserves raw odometry and starting-frame x/y/yaw. Plotting saves an equal-axis
@@ -137,7 +145,10 @@ ros2 bag record -o output/lab2/goal_run01_bag /TTB10/odom /TTB10/cmd_vel
 ```
 
 Stop recording after the task stops. CSV plots use measured data, never generated
-commands. No physical recordings or measured plots exist yet.
+commands. Circle recordings are present in package `lab_runs/circle/`; star recordings
+and measured plots still need saving. The renamed command is `lab2_star`;
+its plot selector is `--route star`, and its size setting is `STAR_RADIUS`.
+See [the migration review](../../../../../docs/PULL_REVIEW_2026_10_20.md).
 
 ## Offline checks
 

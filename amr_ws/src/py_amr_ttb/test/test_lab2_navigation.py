@@ -67,7 +67,7 @@ class NavigationTests(unittest.TestCase):
             cls.nodes = [getattr(importlib.import_module('py_amr_ttb.lab2.' + module), name)
                          for module, name in (
                              ('lab2_go_to_goal', 'Lab2GoToGoal'),
-                             ('lab2_square', 'Lab2Square'), ('lab2_shape', 'Lab2Shape'),
+                             ('lab2_square', 'Lab2Square'), ('lab2_star', 'Lab2Star'),
                          )]
 
     def command(self, node):

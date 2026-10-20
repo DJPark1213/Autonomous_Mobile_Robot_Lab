@@ -15,13 +15,14 @@ from py_amr_ttb.lab_config import LabConfig
 from py_amr_ttb.odom_utils import (
     odometry_is_fresh, read_planar_pose, relative_pose,
 )
-from py_amr_ttb.lab2.navigation import waypoint_command, shape_waypoints
+from py_amr_ttb.lab2.navigation import waypoint_command, star_waypoints
 
 
-class Lab2Shape(Node):
+class Lab2Star(Node):
+    """Trace a five-point star using the shared waypoint controller."""
 
     def __init__(self):
-        super().__init__('lab2_shape')
+        super().__init__('lab2_star')
         self.config = LabConfig
         self.initial_x = None
         self.initial_y = None
@@ -32,20 +33,20 @@ class Lab2Shape(Node):
         self.last_odom_time = None
         self.last_warning = None
         self.goal_reached = False
-        self.waypoints = shape_waypoints(self.config.SHAPE_RADIUS)
+        self.waypoints = star_waypoints(self.config.STAR_RADIUS)
         self.waypoint_index = 0
         self.publisher = self.create_publisher(Twist, self.config.CMD_VEL_TOPIC, 10)
         # Relative pose diagnostics; rqt_plot can read each Float64 /data field.
         self.plot_publishers = {
             name: self.create_publisher(
-                Float64, self.config.ROBOT_NAMESPACE + '/lab2_shape/' + name, 10,
+                Float64, self.config.ROBOT_NAMESPACE + '/lab2_star/' + name, 10,
             ) for name in ('x', 'y', 'yaw', 'distance')
         }
         self.odom_subscription = self.create_subscription(
             Odometry, self.config.ODOM_TOPIC, self.odom_callback, qos_profile_sensor_data,
         )
         self.timer = self.create_timer(self.config.CONTROL_PERIOD, self.controller_callback)
-        self.get_logger().info('lab2_shape: waiting for starting odometry.')
+        self.get_logger().info('lab2_star: waiting for starting odometry.')
 
     def odom_callback(self, message):
         """Accept a valid pose and express it in the fixed starting frame."""
@@ -109,7 +110,7 @@ def main(args=None):
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = None
     try:
-        node = Lab2Shape()
+        node = Lab2Star()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass

@@ -48,7 +48,8 @@ setup(
             'lab_one_controller = py_amr_ttb.lab_one_controller:main',
             'lab2_go_to_goal = py_amr_ttb.lab2.lab2_go_to_goal:main',
             'lab2_square = py_amr_ttb.lab2.lab2_square:main',
-            'lab2_shape = py_amr_ttb.lab2.lab2_shape:main',
+            'lab2_star = py_amr_ttb.lab2.lab2_star:main',
+            'lab2_heart = py_amr_ttb.lab2.lab2_heart:main',
         ],
     },
 )

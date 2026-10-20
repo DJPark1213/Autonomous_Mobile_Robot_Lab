@@ -11,7 +11,7 @@ import time
 # Also works directly from the checkout before colcon install.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src/py_amr_ttb'))
 from py_amr_ttb.lab_config import LabConfig as C  # noqa: E402
-from py_amr_ttb.lab2.navigation import shape_waypoints, square_waypoints  # noqa: E402
+from py_amr_ttb.lab2.navigation import heart_points, star_waypoints, square_waypoints  # noqa: E402
 from py_amr_ttb.odom_utils import read_planar_pose, relative_pose  # noqa: E402
 
 
@@ -89,10 +89,12 @@ def plot(args):
     route = {
         'goal': [(C.GOAL_X_OFFSET, C.GOAL_Y_OFFSET)],
         'square': square_waypoints(C.SQUARE_SIDE_LENGTH),
-        'shape': shape_waypoints(C.SHAPE_RADIUS),
+        'star': star_waypoints(C.STAR_RADIUS),
+        'heart': heart_points(args.heart_width),
     }[args.route]
     fig, ax = plt.subplots(figsize=(7, 7))
-    ax.plot(*zip(*([(0, 0)] + route)), '--o', label='Intended route')
+    ax.plot(*zip(*([(0, 0)] + route)), '--',
+            marker=None if args.route == 'heart' else 'o', label='Intended route')
     ax.plot(*zip(*points), label='Measured odometry')
     ax.scatter(*points[0], marker='s', label='Measured start')
     ax.scatter(*points[-1], marker='x', label='Measured end')
@@ -109,11 +111,14 @@ def plot(args):
     plt.close(fig)
     stats = {
         'source_csv': str(args.csv.resolve()), 'samples': len(points),
+        'route': args.route,
         'duration_s': times[-1] - times[0],
         'measured_path_length_m': sum(math.dist(a, b) for a, b in zip(points, points[1:])),
         'final_distance_to_last_waypoint_m': math.dist(points[-1], route[-1]),
         'note': 'Final distance alone does not prove that every waypoint was visited.',
     }
+    if args.route == 'heart':
+        stats['heart_width_m'] = args.heart_width
     args.output.with_suffix('.json').write_text(json.dumps(stats, indent=2) + '\n')
     print(f'Saved {args.output} and {args.output.with_suffix(".json")}')
 
@@ -130,11 +135,15 @@ def main():
     source.add_argument('--csv', type=Path, help='Existing measured CSV to plot')
     parser.add_argument('--topic', default=C.ODOM_TOPIC)
     parser.add_argument('--duration', type=float, help='Recording seconds; default until Ctrl+C')
-    parser.add_argument('--route', choices=('goal', 'square', 'shape'), default='goal')
+    parser.add_argument('--route', choices=('goal', 'square', 'star', 'heart'), default='goal')
+    parser.add_argument('--heart-width', type=float, default=C.HEART_WIDTH,
+                        help='Width used by the heart controller, meters')
     parser.add_argument('--output', type=Path, default=Path('output/lab2/trajectory.png'))
     args = parser.parse_args()
     if args.duration is not None and (not math.isfinite(args.duration) or args.duration <= 0):
         parser.error('--duration must be finite and positive')
+    if not math.isfinite(args.heart_width) or args.heart_width <= 0:
+        parser.error('--heart-width must be finite and positive')
     try:
         record(args) if args.record else plot(args)
     except (ValueError, OSError, KeyError) as error:

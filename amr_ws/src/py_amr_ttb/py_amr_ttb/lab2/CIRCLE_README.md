@@ -1,16 +1,16 @@
 # Jianyu's Lab 2 Task 3: circle pursuit
 
-This contribution adds eight files. No existing tracked file is edited:
-`setup.py`, `lab_config.py`, shared plotting, and teammates' controllers remain
-the versions from the uploaded repository snapshot (`871ee13`). Use a separate
-branch such as `jianyu/lab2-circle` and review the eight added files in a draft
-pull request before merging.
+Circle pursuit is now integrated into the repository. Circle retains its own
+configuration, odometry helpers, path tracking and plotting. All launch files
+are under the ROS package's `launch/` directory. Circle tests live under its
+`test/` directory, matching the commands below.
 
 ## Added files (relative to amr_ws/src/py_amr_ttb)
 
 | File | Purpose |
 | --- | --- |
-| `py_amr_ttb/lab2/circle_config.py` | Circle-owned defaults; inherits existing robot settings |
+| `py_amr_ttb/lab2/circle_config.py` | Circle-owned defaults, including robot settings |
+| `py_amr_ttb/lab2/circle_odom.py` | Circle-owned pose conversion and freshness helpers |
 | `py_amr_ttb/lab2/pure_pursuit.py` | Circle geometry, lookahead target, curvature and signed progress |
 | `py_amr_ttb/lab2/lab2_circle.py` | Feedback node, diagnostics and stopping |
 | `py_amr_ttb/lab2/circle_plot.py` | Independent odometry recorder and plotter |

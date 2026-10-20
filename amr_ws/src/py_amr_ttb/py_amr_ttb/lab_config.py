@@ -56,7 +56,16 @@ class LabConfig:
     NAV_LINEAR_GAIN = 1.0
     NAV_ANGULAR_GAIN = 2.0
     SQUARE_SIDE_LENGTH = 1.0
-    SHAPE_RADIUS = 0.45
+    # Star circumradius (m); each traveled edge is 2*sin(2*pi/5)*radius.
+    STAR_RADIUS = 0.45
+
+    # Heart: full lateral width, continuous tracking with a stop at the notch.
+    HEART_WIDTH = 1.0
+    HEART_SPEED = 0.08
+    HEART_LOOKAHEAD = 0.12
+    HEART_POSITION_TOLERANCE = 0.03
+    HEART_CUSP_STOP_TIME = 0.30
+    HEART_MAX_PATH_ERROR = 0.20
 
     # Sensor order observed in this robot's IR messages:
     # 0: ir_intensity_side_left
