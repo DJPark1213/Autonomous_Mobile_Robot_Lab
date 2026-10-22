@@ -60,6 +60,27 @@ class PlotTests(unittest.TestCase):
         self.assertIn('--duration must be finite and positive', result.stderr)
 
     @unittest.skipUnless(importlib.util.find_spec('matplotlib'), 'matplotlib required')
+    def test_goal_overshoot_and_velocity_recording_plot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'overshoot.csv'
+            output = Path(folder) / 'overshoot.png'
+            with source.open('w', newline='') as stream:
+                writer = csv.writer(stream)
+                writer.writerow(('elapsed_s', 'x_m', 'y_m', 'yaw_rad',
+                                 'measured_linear_m_s', 'command_linear_m_s'))
+                writer.writerows([
+                    (0, 0, 0, 0, 0, 'nan'),
+                    (1, 1.5, 1.5, .785, .1, 0),
+                    (2, 1.6, 1.6, .785, 0, 0),
+                ])
+            result = self.run_cli('--csv', source, '--route', 'goal', '--output', output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            stats = json.loads(output.with_suffix('.json').read_text())
+            self.assertAlmostEqual(stats['max_goal_line_overshoot_m'], 2 ** .5 * .1)
+            self.assertEqual(stats['minimum_distance_to_goal_m'], 0)
+            self.assertGreater(stats['final_distance_to_last_waypoint_m'], 0)
+
+    @unittest.skipUnless(importlib.util.find_spec('matplotlib'), 'matplotlib required')
     def test_star_route_cli(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / 'star_fixture.csv'

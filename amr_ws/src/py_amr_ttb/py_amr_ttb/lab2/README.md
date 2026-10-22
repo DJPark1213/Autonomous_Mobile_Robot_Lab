@@ -76,6 +76,64 @@ Circle uses its own pursuit algorithm, path progress and lap detection; see
 
 ## Ubuntu build and launch
 
+### Go-to-goal error and speed experiments
+
+Go-to-goal uses proportional distance/heading control, without integral or
+derivative terms. Its goal remains (1.5, 1.5) in the fixed starting frame.
+The following startup parameters apply only to this node; square/star settings
+are unchanged. Restart the node to apply a different experiment configuration.
+
+| Launch argument | Default | Meaning |
+| --- | --- | --- |
+| `linear_gain` | 1.0 | Forward speed per meter of distance error |
+| `angular_gain` | 2.0 | Turning speed per radian of heading error |
+| `max_linear_speed` | 0.4 | Forward command limit, m/s |
+| `max_angular_speed` | 0.4 | Turning command limit, rad/s |
+| `position_tolerance` | 0.05 | Arrival radius, m |
+| `yaw_tolerance` | 0.10 | Forward motion allowed within this heading error, rad |
+
+Start recording from the repository root while the robot is stationary, before
+launching the controller in another sourced terminal:
+
+```bash
+python3 amr_ws/scripts/plot_lab2.py --record output/lab2/goal_slow01.csv
+```
+
+```bash
+ros2 launch py_amr_ttb lab2_go_to_goal.launch.py max_linear_speed:=0.15
+```
+
+Keep recording briefly after arrival to capture residual movement, then stop
+the recorder with Ctrl+C. Plot from the repository root:
+
+```bash
+python3 amr_ws/scripts/plot_lab2.py --csv output/lab2/goal_slow01.csv --route goal --output output/lab2/goal_slow01.png
+```
+
+The goal plot includes trajectory, distance and signed along-route error,
+heading error, and commanded/measured forward speed. Negative signed remaining
+distance means crossing the goal line perpendicular to the start-to-goal route;
+it does not by itself establish accurate arrival. The JSON includes maximum
+goal-line overshoot and minimum/final distance. Old pose-only CSVs still work;
+missing heading/velocity panels are labeled. Velocity commands are the most
+recent received values at each odometry sample, with NaN gaps before a command
+or when its receipt age exceeds 0.5 s. They are not synchronized sensor samples.
+
+Repeat from a stationary start using unique filenames and speed limits such as
+0.15, 0.25 and 0.40 m/s, holding gains fixed. Then vary `linear_gain` with speed
+limits fixed. Proportional slowing near the goal can suppress overshoot, so a
+higher speed limit does not guarantee wobble. Arrival remains latched: the node
+stays stopped after entering tolerance, even if momentum carries it outside.
+Heading error near/after arrival may jump as the goal bearing changes; interpret
+it with the trajectory and distance plot, rather than as turning motion alone.
+
+Live Float64 diagnostics under `/TTB10/lab2_go_to_goal/` include `error_x`,
+`error_y`, `heading_error`, `remaining_along_route`, `command_linear`,
+`command_angular`, `measured_linear`, and `measured_angular`, in addition to
+`x`, `y`, `yaw`, and `distance`. Append `/data` when plotting in rqt_plot.
+
+### Build and run
+
 Run from the ROS workspace on the robot laptop; adjust checkout paths as needed.
 
 ```bash

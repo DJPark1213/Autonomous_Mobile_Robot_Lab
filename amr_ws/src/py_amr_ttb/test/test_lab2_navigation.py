@@ -30,6 +30,9 @@ class Node:
     def create_subscription(self, *args):
         return args
 
+    def declare_parameter(self, name, default):
+        return NS(value=default)
+
     def create_timer(self, period, callback):
         return NS(cancel=lambda: None)
 
@@ -39,7 +42,8 @@ class Node:
 
 def odom(x=0.0, y=0.0, yaw=0.0):
     """Create a planar unit-quaternion pose."""
-    return NS(pose=NS(pose=NS(
+    return NS(twist=NS(twist=NS(linear=NS(x=0.0), angular=NS(z=0.0))),
+              pose=NS(pose=NS(
         position=NS(x=x, y=y),
         orientation=NS(x=0.0, y=0.0, z=math.sin(yaw / 2), w=math.cos(yaw / 2)),
     )))
@@ -128,6 +132,36 @@ class NavigationTests(unittest.TestCase):
                     self.assertEqual(visited, list(range(len(node.waypoints) + 1)))
                 node.controller_callback()
                 self.assert_stopped(node)
+
+    def test_goal_parameters_are_local_and_invalid_values_rejected(self):
+        cls = self.nodes[0]
+        original = cls().config.NAV_MAX_LINEAR_SPEED
+        with patch.object(Node, 'declare_parameter',
+                          side_effect=lambda name, default: NS(
+                              value=0.15 if name == 'max_linear_speed' else default)):
+            node = cls()
+            self.assertEqual(node.config.NAV_MAX_LINEAR_SPEED, 0.15)
+        self.assertEqual(cls().config.NAV_MAX_LINEAR_SPEED, original)
+        for bad in (0.0, -1.0, float('nan'), float('inf')):
+            with patch.object(Node, 'declare_parameter', return_value=NS(value=bad)):
+                with self.assertRaises(ValueError):
+                    cls()
+
+    def test_goal_overshoot_diagnostics_and_latched_stop(self):
+        node = self.nodes[0]()
+        prefix = node.config.ROBOT_NAMESPACE + '/lab2_go_to_goal/'
+        with patch('time.monotonic', return_value=10):
+            node.odom_callback(odom())
+            node.odom_callback(odom(1.5, 1.5))
+            node.controller_callback()
+            self.assertTrue(node.goal_reached)
+            # Residual motion after arrival remains visible, without restarting.
+            node.odom_callback(odom(1.6, 1.6))
+            node.controller_callback()
+        self.assertLess(node.outputs[prefix + 'remaining_along_route'][-1].data, 0)
+        self.assertGreater(node.outputs[prefix + 'distance'][-1].data, 0)
+        self.assertEqual(node.outputs[prefix + 'command_linear'][-1].data, 0)
+        self.assert_stopped(node)
 
 
 if __name__ == '__main__':

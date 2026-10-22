@@ -12,12 +12,13 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src/py_amr_ttb'))
 from py_amr_ttb.lab_config import LabConfig as C  # noqa: E402
 from py_amr_ttb.lab2.navigation import heart_points, star_waypoints, square_waypoints  # noqa: E402
-from py_amr_ttb.odom_utils import read_planar_pose, relative_pose  # noqa: E402
+from py_amr_ttb.odom_utils import normalize_angle, read_planar_pose, relative_pose  # noqa: E402
 
 
 def record(args):
     """Capture valid measured poses; terminate with Ctrl+C or --duration."""
     import rclpy
+    from geometry_msgs.msg import Twist
     from nav_msgs.msg import Odometry
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
@@ -28,12 +29,21 @@ def record(args):
     with args.record.open('x', newline='', encoding='utf-8') as stream:
         writer = csv.writer(stream)
         writer.writerow(('elapsed_s', 'odom_x_m', 'odom_y_m', 'odom_yaw_rad',
-                         'x_m', 'y_m', 'yaw_rad'))
+                         'x_m', 'y_m', 'yaw_rad', 'measured_linear_m_s',
+                         'measured_angular_rad_s', 'command_linear_m_s',
+                         'command_angular_rad_s'))
         rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
         node = Node('lab2_trajectory_recorder')
         origin = None
         started = time.monotonic()
         count = 0
+        last_command = None
+        command_time = None
+
+        def on_command(message):
+            nonlocal last_command, command_time
+            last_command = (message.linear.x, message.angular.z)
+            command_time = time.monotonic()
 
         def on_odom(message):
             nonlocal origin, count
@@ -45,12 +55,21 @@ def record(args):
             if origin is None:
                 origin = pose
             local = relative_pose(*pose, *origin)
-            writer.writerow((time.monotonic() - started, *pose, *local))
+            now = time.monotonic()
+            command = (last_command if command_time is not None
+                       and now - command_time <= C.SENSOR_TIMEOUT
+                       else (float('nan'), float('nan')))
+            writer.writerow((now - started, *pose, *local,
+                             message.twist.twist.linear.x,
+                             message.twist.twist.angular.z, *command))
             stream.flush()
             count += 1
 
         subscription = node.create_subscription(
             Odometry, args.topic, on_odom, qos_profile_sensor_data,
+        )
+        command_subscription = node.create_subscription(
+            Twist, C.CMD_VEL_TOPIC, on_command, 10,
         )
         node.get_logger().info('Recording odometry; keep robot still until controller starts.')
         try:
@@ -62,6 +81,7 @@ def record(args):
             pass
         finally:
             node.destroy_subscription(subscription)
+            node.destroy_subscription(command_subscription)
             node.destroy_node()
             if rclpy.ok():
                 rclpy.shutdown()
@@ -92,7 +112,39 @@ def plot(args):
         'star': star_waypoints(C.STAR_RADIUS),
         'heart': heart_points(args.heart_width),
     }[args.route]
-    fig, ax = plt.subplots(figsize=(7, 7))
+    if args.route == 'goal':
+        fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+        ax = axes[0, 0]
+        gx, gy = route[-1]
+        length = math.hypot(gx, gy)
+        distances = [math.hypot(gx - x, gy - y) for x, y in points]
+        remaining = [((gx - x) * gx + (gy - y) * gy) / length
+                     if length else 0.0 for x, y in points]
+        axes[0, 1].plot(times, distances, label='Distance to goal')
+        axes[0, 1].plot(times, remaining, label='Signed remaining along route')
+        axes[0, 1].axhline(0, color='black', linewidth=0.7)
+        axes[0, 1].set(xlabel='Elapsed (s)', ylabel='Error (m)',
+                       title='Negative signed remaining indicates goal-line overshoot')
+        if 'yaw_rad' in rows[0]:
+            headings = [normalize_angle(math.atan2(gy - y, gx - x) - float(r['yaw_rad']))
+                        for r, (x, y) in zip(rows, points)]
+            axes[1, 0].plot(times, headings, label='Heading error')
+        axes[1, 0].set(xlabel='Elapsed (s)', ylabel='Heading error (rad)')
+        for field, label in (('measured_linear_m_s', 'Measured forward speed'),
+                             ('command_linear_m_s', 'Commanded forward speed')):
+            if field in rows[0]:
+                axes[1, 1].plot(times, [float(r[field]) for r in rows], label=label)
+        axes[1, 1].set(xlabel='Elapsed (s)', ylabel='Speed (m/s)')
+        for panel in (axes[0, 1], axes[1, 0], axes[1, 1]):
+            panel.grid(True)
+            if panel.lines:
+                panel.legend()
+        if not axes[1, 0].lines:
+            axes[1, 0].text(0.5, 0.5, 'Heading not recorded', ha='center')
+        if not axes[1, 1].lines:
+            axes[1, 1].text(0.5, 0.5, 'Velocity not recorded', ha='center')
+    else:
+        fig, ax = plt.subplots(figsize=(7, 7))
     ax.plot(*zip(*([(0, 0)] + route)), '--',
             marker=None if args.route == 'heart' else 'o', label='Intended route')
     ax.plot(*zip(*points), label='Measured odometry')
@@ -119,6 +171,9 @@ def plot(args):
     }
     if args.route == 'heart':
         stats['heart_width_m'] = args.heart_width
+    if args.route == 'goal':
+        stats['max_goal_line_overshoot_m'] = max(0.0, -min(remaining))
+        stats['minimum_distance_to_goal_m'] = min(distances)
     args.output.with_suffix('.json').write_text(json.dumps(stats, indent=2) + '\n')
     print(f'Saved {args.output} and {args.output.with_suffix(".json")}')
 
