@@ -18,6 +18,7 @@ def generate_launch_description():
         'laps': C.CIRCLE_LAPS,
         'direction': C.CIRCLE_DIRECTION,
         'robot_namespace': C.ROBOT_NAMESPACE,
+        **C.CONTROL_DEFAULTS,
     }
     arguments = [DeclareLaunchArgument(name, default_value=str(default))
                  for name, default in settings.items()]

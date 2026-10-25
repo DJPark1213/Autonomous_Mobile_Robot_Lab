@@ -137,3 +137,48 @@ python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p 'test_controller_l
 Tests use ideal kinematics, ROS doubles and synthetic plotting fixtures. ROS
 build/launch, message transport, physical accuracy and stopping still require
 the actual Ubuntu/TurtleBot environment. No physical test results are claimed.
+
+
+## PID speed and alignment recovery
+
+Circle geometry is separate from motion control: `pursuit_geometry` supplies
+curvature and heading error; `CircleSpeedController` regulates measured odometry
+forward speed; `AlignmentRecovery` selects STOP/FOLLOW/ALIGN. The node composes
+`omega = v * curvature` after limiting forward speed, preserving curvature.
+The existing completion test and latched excessive radial error stop remain.
+
+The speed law is desired speed plus PID correction, with a curvature-feasible
+setpoint. Integral accumulation is blocked by velocity and acceleration limits.
+Normal forward commands ramp at `acceleration` m/s^2; safety stops, alignment,
+and tighter curvature limits override this ramp. PID state resets on stops,
+alignment, invalid odometry velocity, and nonpositive/long control intervals.
+Actual monotonic elapsed time supplies dt (nominal period on startup/reset).
+
+Startup launch arguments, also available as ROS parameters:
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `speed_kp` | 0.1 | Speed proportional gain |
+| `speed_ki` | 0.01 | Speed integral gain |
+| `speed_kd` | 0.005 | Speed derivative gain |
+| `acceleration` | 0.15 | Normal command ramp, m/s^2 |
+| `align_gain` | 2.0 | Turn-in-place proportional gain |
+| `align_enter` | 1.2 | Enter alignment at this absolute heading error, rad |
+| `align_exit` | 0.35 | Resume following below this heading error, rad |
+
+Require `0 < align_exit < align_enter <= pi/2`. Alignment commands zero forward
+speed; hysteresis avoids repeated switching near a single threshold. Following
+restarts with a fresh speed PID and a ramp from zero. Gains are initial values,
+not validated hardware tuning. Lookahead remains fixed and needs speed-specific
+tuning; speed PID alone does not eliminate steering oscillations.
+
+Additional Float64 diagnostics under `/TTB10/lab2_circle/`: `desired_speed`,
+`measured_speed`, `pid_correction` (final limited command minus requested speed,
+including ramp/curvature effects, zero outside FOLLOW), and `recovery_state`
+(0 STOP, 1 FOLLOW, 2 ALIGN). Existing radial error and angular command topics
+help distinguish steering oscillation from speed surging.
+
+```bash
+ros2 launch py_amr_ttb lab2_circle.launch.py speed:=0.12 speed_kp:=0.1 speed_ki:=0.01 speed_kd:=0.005
+ros2 run rqt_plot rqt_plot /TTB10/lab2_circle/desired_speed/data /TTB10/lab2_circle/measured_speed/data /TTB10/lab2_circle/radial_error/data /TTB10/lab2_circle/recovery_state/data
+```

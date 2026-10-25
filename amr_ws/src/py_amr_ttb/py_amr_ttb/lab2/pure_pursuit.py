@@ -72,6 +72,19 @@ def pursuit_command(x, y, yaw, target_x, target_y, speed, max_linear, max_angula
     Reduce v if needed to respect the angular limit while retaining curvature.
     Turn in place when the target is behind, then resume forward tracking.
     """
+    if (target_x - x) ** 2 + (target_y - y) ** 2 < 1e-12:
+        return 0.0, 0.0
+    curvature, angle = pursuit_geometry(x, y, yaw, target_x, target_y)
+    if curvature is None:
+        return 0.0, max(-max_angular, min(max_angular, 2.0 * angle))
+    linear = min(speed, max_linear)
+    if abs(curvature) > 1e-12:
+        linear = min(linear, max_angular / abs(curvature))
+    return linear, linear * curvature
+
+
+def pursuit_geometry(x, y, yaw, target_x, target_y):
+    """Return curvature and heading error; None curvature means target behind."""
     dx, dy = target_x - x, target_y - y
     c, s = math.cos(yaw), math.sin(yaw)
     forward = c * dx + s * dy
@@ -79,11 +92,5 @@ def pursuit_command(x, y, yaw, target_x, target_y, speed, max_linear, max_angula
     distance_squared = dx * dx + dy * dy
     if distance_squared < 1e-12:
         return 0.0, 0.0
-    if forward <= 0:
-        angle = math.atan2(left, forward)
-        return 0.0, max(-max_angular, min(max_angular, 2.0 * angle))
-    curvature = 2.0 * left / distance_squared
-    linear = min(speed, max_linear)
-    if abs(curvature) > 1e-12:
-        linear = min(linear, max_angular / abs(curvature))
-    return linear, linear * curvature
+    angle = math.atan2(left, forward)
+    return (2.0 * left / distance_squared if forward > 0 else None), angle

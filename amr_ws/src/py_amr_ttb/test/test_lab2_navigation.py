@@ -109,11 +109,12 @@ class NavigationTests(unittest.TestCase):
     def test_all_routes_complete_from_rotated_translated_start(self):
         # Ideal differential-drive model, not a physical robot result.
         for cls in self.nodes:
-            with self.subTest(node=cls.__name__), patch('time.monotonic', return_value=10):
+            with self.subTest(node=cls.__name__), patch('time.monotonic', return_value=10) as clock:
                 node = cls()
                 x, y, yaw = 8.0, -3.0, 1.2
                 visited = []
                 for step in range(6000):
+                    clock.return_value = 10 + step * .1
                     node.odom_callback(odom(x, y, yaw))
                     node.controller_callback()
                     cmd = self.command(node)

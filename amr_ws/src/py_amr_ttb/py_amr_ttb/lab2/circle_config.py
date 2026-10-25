@@ -21,3 +21,10 @@ class CircleConfig:
     CIRCLE_DIRECTION = 1
     CIRCLE_FINISH_YAW_TOLERANCE = 0.25
     CIRCLE_MAX_RADIAL_ERROR = 0.35
+
+    # Initial PID gains require validation on the physical robot.
+    CONTROL_DEFAULTS = {
+        'speed_kp': 0.1, 'speed_ki': 0.01, 'speed_kd': 0.005,
+        'acceleration': 0.15, 'align_gain': 2.0,
+        'align_enter': 1.2, 'align_exit': 0.35,
+    }

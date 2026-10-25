@@ -12,7 +12,8 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Float64
 
 from py_amr_ttb.lab2.circle_config import CircleConfig
-from py_amr_ttb.lab2.pure_pursuit import CirclePath, CircleProgress, pursuit_command
+from py_amr_ttb.lab2.motion_control import AlignmentRecovery, CircleSpeedController
+from py_amr_ttb.lab2.pure_pursuit import CirclePath, CircleProgress, pursuit_geometry
 from py_amr_ttb.lab2.circle_odom import odometry_is_fresh, read_planar_pose, relative_pose
 
 
@@ -29,9 +30,24 @@ class Lab2Circle(Node):
             'laps': self.config.CIRCLE_LAPS,
             'direction': self.config.CIRCLE_DIRECTION,
             'robot_namespace': self.config.ROBOT_NAMESPACE,
+            **self.config.CONTROL_DEFAULTS,
         }
         settings = {name: self.declare_parameter(name, default).value
                     for name, default in defaults.items()}
+        for name in self.config.CONTROL_DEFAULTS:
+            value = settings[name]
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f'{name} must be finite and nonnegative')
+        if settings['acceleration'] <= 0 or settings['align_gain'] <= 0:
+            raise ValueError('acceleration and align_gain must be positive')
+        if settings['align_enter'] > math.pi / 2:
+            raise ValueError('align_enter must be <= pi/2 to keep forward pursuit valid')
+        self.recovery = AlignmentRecovery(settings['align_enter'], settings['align_exit'])
+        self.speed_control = CircleSpeedController(settings['speed_kp'], settings['speed_ki'],
+                                                  settings['speed_kd'], settings['acceleration'])
+        self.align_gain = settings['align_gain']
+        self.measured_speed = 0.0
+        self.last_control_time = None
         self.path = CirclePath(settings['radius'], settings['direction'])
         self.speed = settings['speed']
         self.lookahead = settings['lookahead']
@@ -59,7 +75,8 @@ class Lab2Circle(Node):
             name: self.create_publisher(Float64, prefix + '/lab2_circle/' + name, 10)
             for name in ('x', 'y', 'yaw', 'target_x', 'target_y', 'radial_error',
                          'progress', 'laps', 'distance_to_start', 'done',
-                         'linear_command', 'angular_command')
+                         'linear_command', 'angular_command', 'desired_speed',
+                         'measured_speed', 'pid_correction', 'recovery_state')
         }
         self.odom_subscription = self.create_subscription(
             Odometry, self.odom_topic, self.odom_callback, qos_profile_sensor_data)
@@ -74,10 +91,14 @@ class Lab2Circle(Node):
         """Capture one fixed origin; update position and directed path progress."""
         try:
             pose = read_planar_pose(message)
+            measured_speed = message.twist.twist.linear.x
+            if not math.isfinite(measured_speed):
+                raise ValueError('Invalid measured speed')
         except ValueError as error:
             self.last_odom_time = None
             self.warn_once(str(error))
             return
+        self.measured_speed = measured_speed
         if self.origin is None:
             self.origin = pose
             self.get_logger().info('Starting pose captured. Circle tracking begins.')
@@ -103,6 +124,9 @@ class Lab2Circle(Node):
             'laps': self.progress.radians / math.tau,
             'distance_to_start': math.hypot(x, y), 'done': float(self.goal_reached),
             'linear_command': command.linear.x, 'angular_command': command.angular.z,
+            'desired_speed': self.speed, 'measured_speed': self.measured_speed,
+            'pid_correction': command.linear.x - self.speed if self.recovery.state == 'FOLLOW' else 0.0,
+            'recovery_state': {'STOP': 0, 'FOLLOW': 1, 'ALIGN': 2}[self.recovery.state],
         }
         for name, value in values.items():
             self.plot_publishers[name].publish(Float64(data=float(value)))
@@ -110,11 +134,21 @@ class Lab2Circle(Node):
     def controller_callback(self):
         """Publish exactly one velocity per tick; completion remains stopped."""
         command = Twist()
+        now = time.monotonic()
+        dt = self.config.CONTROL_PERIOD if self.last_control_time is None else now - self.last_control_time
+        self.last_control_time = now
+        if dt <= 0 or dt > self.config.SENSOR_TIMEOUT:
+            self.speed_control.reset()
+            self.recovery.reset()
+            dt = self.config.CONTROL_PERIOD
         fresh = odometry_is_fresh(
             time.monotonic(), self.last_odom_time, self.config.SENSOR_TIMEOUT)
         if self.goal_reached or self.tracking_failed:
-            pass
+            self.speed_control.reset()
+            self.recovery.reset()
         elif not fresh:
+            self.speed_control.reset()
+            self.recovery.reset()
             self.warn_once('Missing, invalid, or stale odometry: stopping.')
         else:
             self.last_warning = None
@@ -126,17 +160,29 @@ class Lab2Circle(Node):
             )
             if completed:
                 self.goal_reached = True
+                self.speed_control.reset()
+                self.recovery.reset()
                 self.get_logger().info(
                     f'Circle completed: {self.progress.radians / math.tau:.3f} laps, '
                     f'closure error={math.hypot(x, y):.3f} m. Stopped. Ctrl+C to exit.')
             elif abs(self.path.radial_error(x, y)) > self.config.CIRCLE_MAX_RADIAL_ERROR:
                 self.tracking_failed = True
+                self.speed_control.reset()
+                self.recovery.reset()
                 self.warn_once('Circle tracking error > 0.35 m: stopped. Check pose and relaunch.')
             else:
                 tx, ty = self.path.target(x, y, self.lookahead)
-                command.linear.x, command.angular.z = pursuit_command(
-                    x, y, yaw, tx, ty, self.speed, self.config.NAV_MAX_LINEAR_SPEED,
-                    self.config.NAV_MAX_ANGULAR_SPEED)
+                curvature, heading = pursuit_geometry(x, y, yaw, tx, ty)
+                if self.recovery.update(heading) == 'ALIGN':
+                    self.speed_control.reset()
+                    command.angular.z = max(-self.config.NAV_MAX_ANGULAR_SPEED,
+                                            min(self.config.NAV_MAX_ANGULAR_SPEED,
+                                                self.align_gain * heading))
+                else:
+                    command.linear.x = self.speed_control.update(
+                        self.speed, self.measured_speed, curvature, dt,
+                        self.config.NAV_MAX_LINEAR_SPEED, self.config.NAV_MAX_ANGULAR_SPEED)
+                    command.angular.z = command.linear.x * curvature
         self.publisher.publish(command)
         if fresh:
             self.publish_diagnostics(command)
