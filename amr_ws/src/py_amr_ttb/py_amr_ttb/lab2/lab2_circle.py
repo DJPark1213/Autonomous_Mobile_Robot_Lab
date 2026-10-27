@@ -1,195 +1,109 @@
-"""Follow a circle with odometry-feedback pure pursuit and measured lap stopping."""
-
-import math
-import time
-
-import rclpy
-from geometry_msgs.msg import Twist
-from nav_msgs.msg import Odometry
-from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
-from rclpy.signals import SignalHandlerOptions
-from std_msgs.msg import Float64
-
-from py_amr_ttb.lab2.circle_config import CircleConfig
-from py_amr_ttb.lab2.motion_control import AlignmentRecovery, CircleSpeedController
-from py_amr_ttb.lab2.pure_pursuit import CirclePath, CircleProgress, pursuit_geometry
-from py_amr_ttb.lab2.circle_odom import odometry_is_fresh, read_planar_pose, relative_pose
-
-
-class Lab2Circle(Node):
-    """Track a continuous circle in the fixed starting robot frame."""
-
-    def __init__(self):
-        super().__init__('lab2_circle')
-        self.config = CircleConfig
-        defaults = {
-            'radius': self.config.CIRCLE_RADIUS,
-            'speed': self.config.CIRCLE_SPEED,
-            'lookahead': self.config.CIRCLE_LOOKAHEAD,
-            'laps': self.config.CIRCLE_LAPS,
-            'direction': self.config.CIRCLE_DIRECTION,
-            'robot_namespace': self.config.ROBOT_NAMESPACE,
-            **self.config.CONTROL_DEFAULTS,
-        }
-        settings = {name: self.declare_parameter(name, default).value
-                    for name, default in defaults.items()}
-        for name in self.config.CONTROL_DEFAULTS:
-            value = settings[name]
-            if not math.isfinite(value) or value < 0:
-                raise ValueError(f'{name} must be finite and nonnegative')
-        if settings['acceleration'] <= 0 or settings['align_gain'] <= 0:
-            raise ValueError('acceleration and align_gain must be positive')
-        if settings['align_enter'] > math.pi / 2:
-            raise ValueError('align_enter must be <= pi/2 to keep forward pursuit valid')
-        self.recovery = AlignmentRecovery(settings['align_enter'], settings['align_exit'])
-        self.speed_control = CircleSpeedController(settings['speed_kp'], settings['speed_ki'],
-                                                  settings['speed_kd'], settings['acceleration'])
-        self.align_gain = settings['align_gain']
-        self.measured_speed = 0.0
-        self.last_control_time = None
-        self.path = CirclePath(settings['radius'], settings['direction'])
-        self.speed = settings['speed']
-        self.lookahead = settings['lookahead']
-        self.laps = settings['laps']
-        if not math.isfinite(self.speed) or not 0 < self.speed <= self.config.NAV_MAX_LINEAR_SPEED:
-            raise ValueError('speed must be positive and <= NAV_MAX_LINEAR_SPEED (0.20 m/s)')
-        if not math.isfinite(self.lookahead) or not 0 < self.lookahead < 2 * self.path.radius:
-            raise ValueError('lookahead must be positive and less than 2 * radius')
-        if isinstance(self.laps, bool) or not isinstance(self.laps, int) or self.laps < 1:
-            raise ValueError('laps must be a positive integer')
-        prefix = settings['robot_namespace'].rstrip('/')
-        if not prefix.startswith('/') or prefix == '':
-            raise ValueError('robot_namespace must be absolute, e.g. /TTB10')
-        self.cmd_topic = prefix + '/cmd_vel'
-        self.odom_topic = prefix + '/odom'
-        self.progress = CircleProgress(self.path)
-        self.origin = None
-        self.current_x = self.current_y = self.current_yaw = 0.0
-        self.last_odom_time = None
-        self.last_warning = None
-        self.goal_reached = False
-        self.tracking_failed = False
-        self.publisher = self.create_publisher(Twist, self.cmd_topic, 10)
-        self.plot_publishers = {
-            name: self.create_publisher(Float64, prefix + '/lab2_circle/' + name, 10)
-            for name in ('x', 'y', 'yaw', 'target_x', 'target_y', 'radial_error',
-                         'progress', 'laps', 'distance_to_start', 'done',
-                         'linear_command', 'angular_command', 'desired_speed',
-                         'measured_speed', 'pid_correction', 'recovery_state')
-        }
-        self.odom_subscription = self.create_subscription(
-            Odometry, self.odom_topic, self.odom_callback, qos_profile_sensor_data)
-        self.timer = self.create_timer(self.config.CONTROL_PERIOD, self.controller_callback)
-        direction = 'CCW (left)' if self.path.direction == 1 else 'CW (right)'
-        self.get_logger().info(
-            f'Circle: radius={self.path.radius:.3f} m, speed={self.speed:.3f} m/s, '
-            f'lookahead={self.lookahead:.3f} m, {self.laps} lap(s), {direction}. '
-            f'Waiting for {self.odom_topic}.')
-
-    def odom_callback(self, message):
-        """Capture one fixed origin; update position and directed path progress."""
+        self.progress.update(self.current_x, self.current_y)
         try:
-            pose = read_planar_pose(message)
-            measured_speed = message.twist.twist.linear.x
-            if not math.isfinite(measured_speed):
-                raise ValueError('Invalid measured speed')
-        except ValueError as error:
-            self.last_odom_time = None
-            self.warn_once(str(error))
-            return
-        self.measured_speed = measured_speed
-        if self.origin is None:
-            self.origin = pose
-            self.get_logger().info('Starting pose captured. Circle tracking begins.')
-        self.current_x, self.current_y, self.current_yaw = relative_pose(*pose, *self.origin)
-        self.last_odom_time = time.monotonic()
-        if not self.goal_reached:
-            self.progress.update(self.current_x, self.current_y)
+            self.measured_linear = float(message.twist.twist.linear.x)
+            self.measured_angular = float(message.twist.twist.angular.z)
+        except (AttributeError, TypeError, ValueError):
+            self.measured_linear = self.measured_angular = float('nan')
 
     def warn_once(self, warning):
-        """Report a changed warning once."""
+        """Suppress unchanged consecutive warnings."""
         if warning != self.last_warning:
             self.get_logger().warning(warning)
             self.last_warning = warning
 
-    def publish_diagnostics(self, command):
-        """Publish starting-frame trajectory and pursuit tracking diagnostics."""
-        x, y = self.current_x, self.current_y
-        tx, ty = self.path.target(x, y, self.lookahead)
-        values = {
-            'x': x, 'y': y, 'yaw': self.current_yaw, 'target_x': tx, 'target_y': ty,
-            'radial_error': self.path.radial_error(x, y),
-            'progress': self.progress.radians,
-            'laps': self.progress.radians / math.tau,
-            'distance_to_start': math.hypot(x, y), 'done': float(self.goal_reached),
-            'linear_command': command.linear.x, 'angular_command': command.angular.z,
-            'desired_speed': self.speed, 'measured_speed': self.measured_speed,
-            'pid_correction': command.linear.x - self.speed if self.recovery.state == 'FOLLOW' else 0.0,
-            'recovery_state': {'STOP': 0, 'FOLLOW': 1, 'ALIGN': 2}[self.recovery.state],
-        }
-        for name, value in values.items():
-            self.plot_publishers[name].publish(Float64(data=float(value)))
-
     def controller_callback(self):
-        """Publish exactly one velocity per tick; completion remains stopped."""
+        """Advance the timed target, chase it, and send one command per tick."""
         command = Twist()
         now = time.monotonic()
-        dt = self.config.CONTROL_PERIOD if self.last_control_time is None else now - self.last_control_time
-        self.last_control_time = now
-        if dt <= 0 or dt > self.config.SENSOR_TIMEOUT:
-            self.speed_control.reset()
-            self.recovery.reset()
-            dt = self.config.CONTROL_PERIOD
+        if self.started is None:
+            self.publisher.publish(command)
+            return
+        self.speed = self.get_parameter('speed').value
+        target_speed = self.get_parameter('target_speed').value
+        tx, ty = self.target.advance(now, speed=target_speed)
         fresh = odometry_is_fresh(
-            time.monotonic(), self.last_odom_time, self.config.SENSOR_TIMEOUT)
-        if self.goal_reached or self.tracking_failed:
-            self.speed_control.reset()
-            self.recovery.reset()
-        elif not fresh:
-            self.speed_control.reset()
-            self.recovery.reset()
-            self.warn_once('Missing, invalid, or stale odometry: stopping.')
+            now, self.last_odom_time, self.config.SENSOR_TIMEOUT)
+        if self.target.done and not self.goal_reached:
+            self.goal_reached = True
+            self.get_logger().info(
+                'Circle experiment completed: target reached its time/lap limit. '
+                'Robot stopped. Ctrl+C to exit.')
+        if not fresh:
+            self.warn_once(
+                'Stale/invalid odometry: robot stopped; target clock continues.')
         else:
             self.last_warning = None
-            x, y, yaw = self.current_x, self.current_y, self.current_yaw
-            completed = (
-                self.progress.radians >= math.tau * self.laps
-                and math.hypot(x, y) <= self.config.NAV_POSITION_TOLERANCE
-                and abs(yaw) <= self.config.CIRCLE_FINISH_YAW_TOLERANCE
-            )
-            if completed:
-                self.goal_reached = True
-                self.speed_control.reset()
-                self.recovery.reset()
-                self.get_logger().info(
-                    f'Circle completed: {self.progress.radians / math.tau:.3f} laps, '
-                    f'closure error={math.hypot(x, y):.3f} m. Stopped. Ctrl+C to exit.')
-            elif abs(self.path.radial_error(x, y)) > self.config.CIRCLE_MAX_RADIAL_ERROR:
-                self.tracking_failed = True
-                self.speed_control.reset()
-                self.recovery.reset()
-                self.warn_once('Circle tracking error > 0.35 m: stopped. Check pose and relaunch.')
-            else:
-                tx, ty = self.path.target(x, y, self.lookahead)
-                curvature, heading = pursuit_geometry(x, y, yaw, tx, ty)
-                if self.recovery.update(heading) == 'ALIGN':
-                    self.speed_control.reset()
-                    command.angular.z = max(-self.config.NAV_MAX_ANGULAR_SPEED,
-                                            min(self.config.NAV_MAX_ANGULAR_SPEED,
-                                                self.align_gain * heading))
-                else:
-                    command.linear.x = self.speed_control.update(
-                        self.speed, self.measured_speed, curvature, dt,
-                        self.config.NAV_MAX_LINEAR_SPEED, self.config.NAV_MAX_ANGULAR_SPEED)
-                    command.angular.z = command.linear.x * curvature
+            if not self.goal_reached and self.speed > 0:
+                command.linear.x, command.angular.z = pursuit_command(
+                    self.current_x, self.current_y, self.current_yaw,
+                    tx, ty, self.speed, self.config.NAV_MAX_LINEAR_SPEED,
+                    self.config.NAV_MAX_ANGULAR_SPEED)
         self.publisher.publish(command)
-        if fresh:
-            self.publish_diagnostics(command)
+        nan = float('nan')
+        x, y, yaw = self.current_x, self.current_y, self.current_yaw
+        sample = {
+            'elapsed_s': max(0.0, now - self.started),
+            'odom_x_m': self.raw_pose[0] if fresh else nan,
+            'odom_y_m': self.raw_pose[1] if fresh else nan,
+            'odom_yaw_rad': self.raw_pose[2] if fresh else nan,
+            'x_m': x if fresh else nan, 'y_m': y if fresh else nan,
+            'yaw_rad': yaw if fresh else nan,
+            'target_x_m': tx, 'target_y_m': ty,
+            'target_phase_rad': self.target.phase,
+            'target_laps': self.target.completed_laps,
+            'robot_phase_rad': self.progress.radians if fresh else nan,
+            'position_error_m': math.hypot(tx - x, ty - y) if fresh else nan,
+            'radial_error_m': self.path.radial_error(x, y) if fresh else nan,
+            'phase_gap_rad': self.target.phase - self.progress.radians if fresh else nan,
+            'linear_command_mps': command.linear.x,
+            'angular_command_radps': command.angular.z,
+            'measured_linear_mps': self.measured_linear if fresh else nan,
+            'measured_angular_radps': self.measured_angular if fresh else nan,
+            'target_speed_mps': 0.0 if self.goal_reached else self.target.speed,
+            'robot_speed_mps': 0.0 if self.goal_reached else self.speed,
+            'radius_m': self.path.radius, 'direction': self.path.direction,
+            'lookahead_m': self.target.lookahead,
+            'requested_laps': self.target.laps,
+            'duration_limit_s': self.target.duration,
+            'odom_age_s': (now - self.last_odom_time
+                           if self.last_odom_time is not None else nan),
+            'odom_fresh': int(fresh), 'done': int(self.goal_reached),
+            'data_source': 'robot_odometry',
+        }
+        self.last_sample = sample
+        self.publish_diagnostics(sample)
+
+    def publish_diagnostics(self, sample):
+        """Keep old scalar topic names; add error/target paired telemetry."""
+        fields = {
+            'x': 'x_m', 'y': 'y_m', 'yaw': 'yaw_rad',
+            'target_x': 'target_x_m', 'target_y': 'target_y_m',
+            'radial_error': 'radial_error_m', 'progress': 'robot_phase_rad',
+            'done': 'done', 'linear_command': 'linear_command_mps',
+            'angular_command': 'angular_command_radps',
+            'position_error': 'position_error_m',
+            'target_phase': 'target_phase_rad', 'target_laps': 'target_laps',
+            'target_speed': 'target_speed_mps', 'robot_speed': 'robot_speed_mps',
+            'phase_gap': 'phase_gap_rad', 'odom_fresh': 'odom_fresh',
+            'elapsed': 'elapsed_s', 'measured_linear': 'measured_linear_mps',
+            'measured_angular': 'measured_angular_radps',
+        }
+        for name, field in fields.items():
+            self.plot_publishers[name].publish(Float64(data=float(sample[field])))
+        self.plot_publishers['laps'].publish(
+            Float64(data=sample['robot_phase_rad'] / math.tau))
+        self.plot_publishers['distance_to_start'].publish(
+            Float64(data=math.hypot(sample['x_m'], sample['y_m'])))
+        serializable = {
+            key: None if isinstance(value, (int, float)) and not math.isfinite(value) else value
+            for key, value in sample.items()
+        }
+        self.sample_publisher.publish(
+            String(data=json.dumps(serializable, allow_nan=False)))
 
 
 def main(args=None):
-    """Run the node, sending zero velocity while the ROS context is available."""
+    """Run circle with zero velocity on normal Ctrl+C shutdown."""
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = None
     try:
