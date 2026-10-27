@@ -94,3 +94,81 @@ CIRCLE_FIELDS = (
     'x_m', 'y_m', 'yaw_rad', 'target_x_m', 'target_y_m',
     'target_phase_rad', 'target_laps', 'robot_phase_rad',
     'position_error_m', 'radial_error_m', 'phase_gap_rad',
+    'linear_command_mps', 'angular_command_radps',
+    'measured_linear_mps', 'measured_angular_radps',
+    'target_speed_mps', 'robot_speed_mps', 'radius_m', 'direction',
+    'lookahead_m', 'requested_laps', 'duration_limit_s',
+    'odom_age_s', 'odom_fresh', 'done', 'data_source',
+)
+
+
+class TimedCircleTarget:
+    """Timed target; lookahead sets only its initial chord distance.
+
+    No robot pose/progress is an input. Speed changes preserve target phase.
+    """
+
+    def __init__(self, radius, speed=.12, lookahead=.30, direction=1,
+                 laps=1, duration=0.0):
+        self.path = CirclePath(radius, direction)
+        if not math.isfinite(speed) or speed < 0:
+            raise ValueError('target_speed must be finite and nonnegative')
+        if not math.isfinite(lookahead) or not 0 < lookahead < 2 * radius:
+            raise ValueError('lookahead must be positive and less than 2 * radius')
+        if isinstance(laps, bool) or not isinstance(laps, int) or laps < 1:
+            raise ValueError('laps must be a positive integer')
+        if not math.isfinite(duration) or duration < 0:
+            raise ValueError('duration must be finite and nonnegative')
+        self.lookahead = lookahead
+        self.speed = speed
+        self.initial_phase = 2 * math.asin(lookahead / (2 * radius))
+        self.phase = self.initial_phase
+        self.laps = laps
+        self.duration = duration
+        self.elapsed = 0.0
+        self.last_time = None
+        self.done = False
+
+    def start(self, now):
+        """Fix the clock once after the first valid robot origin is captured."""
+        if not math.isfinite(now):
+            raise ValueError('time must be finite')
+        if self.last_time is None:
+            self.last_time = now
+
+    def advance(self, now, speed=None):
+        """Integrate old speed to now; a new speed begins on this tick."""
+        if not math.isfinite(now):
+            raise ValueError('time must be finite')
+        if speed is not None and (not math.isfinite(speed) or speed < 0):
+            raise ValueError('target_speed must be finite and nonnegative')
+        self.start(now)
+        dt = now - self.last_time
+        if dt < 0:
+            raise ValueError('target clock must be monotonic')
+        self.last_time = now
+        if not self.done:
+            if self.duration > 0:
+                dt = min(dt, max(0.0, self.duration - self.elapsed))
+                self.phase += self.speed * dt / self.path.radius
+                self.elapsed += dt
+                self.done = self.elapsed >= self.duration - 1e-10
+            else:
+                remaining = max(0.0, math.tau * self.laps
+                                - (self.phase - self.initial_phase))
+                advance = self.speed * dt / self.path.radius
+                if advance >= remaining - 1e-12 and self.speed > 0:
+                    self.elapsed += remaining * self.path.radius / self.speed
+                    self.phase = self.initial_phase + math.tau * self.laps
+                    self.done = True
+                else:
+                    self.phase += advance
+                    self.elapsed += dt
+        if speed is not None:
+            self.speed = speed
+        return self.path.point(self.phase)
+
+    @property
+    def completed_laps(self):
+        """Return target revolutions excluding the one-time initial lead."""
+        return (self.phase - self.initial_phase) / math.tau
