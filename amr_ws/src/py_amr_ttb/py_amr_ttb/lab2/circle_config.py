@@ -15,16 +15,11 @@ class CircleConfig:
     NAV_MAX_ANGULAR_SPEED = 0.40
 
     CIRCLE_RADIUS = 0.75
-    CIRCLE_SPEED = 0.12
+    CIRCLE_SPEED = 0.12  # Robot cruise request (m/s); also runtime parameter speed.
+    CIRCLE_TARGET_SPEED = 0.12  # Independent virtual target speed (m/s).
+    CIRCLE_DURATION = 0.0  # >0: fixed seconds; 0: finish after target laps.
     CIRCLE_LOOKAHEAD = 0.30
     CIRCLE_LAPS = 1
     CIRCLE_DIRECTION = 1
     CIRCLE_FINISH_YAW_TOLERANCE = 0.25
     CIRCLE_MAX_RADIAL_ERROR = 0.35
-
-    # Initial PID gains require validation on the physical robot.
-    CONTROL_DEFAULTS = {
-        'speed_kp': 0.1, 'speed_ki': 0.01, 'speed_kd': 0.005,
-        'acceleration': 0.15, 'align_gain': 2.0,
-        'align_enter': 1.2, 'align_exit': 0.35,
-    }
