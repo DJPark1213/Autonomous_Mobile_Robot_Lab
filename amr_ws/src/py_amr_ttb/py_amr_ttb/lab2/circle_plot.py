@@ -141,7 +141,7 @@ def plot_moving_target(args, rows):
                  title='Progress around circle center, including initial lead')
     for field, label, style in (
             ('target_speed_mps', 'Target speed', '--'),
-            ('robot_speed_mps', 'Robot speed request', ':'),
+            ('robot_speed_mps', 'Robot speed setting (limit in v2)', ':'),
             ('linear_command_mps', 'Robot command', '-'),
             ('measured_linear_mps', 'Robot odom speed', '-')):
         speeds.plot(times, values(field), style, label=label, alpha=.8)
