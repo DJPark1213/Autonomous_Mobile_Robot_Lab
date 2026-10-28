@@ -1,4 +1,4 @@
-"""Circle: independent moving target and robot pursuit, original interfaces."""
+"""Circle: independent target, vector-field steering and phase speed control."""
 
 import json
 import math
@@ -18,7 +18,7 @@ from py_amr_ttb.lab2.circle_odom import (
     odometry_is_fresh, read_planar_pose, relative_pose,
 )
 from py_amr_ttb.lab2.pure_pursuit import (
-    CircleProgress, TimedCircleTarget, pursuit_command,
+    CircleProgress, TimedCircleTarget, circle_tracking_command,
 )
 
 
@@ -85,7 +85,7 @@ class Lab2Circle(Node):
         end = (f'{self.target.duration:.1f} seconds' if self.target.duration > 0
                else f'{self.target.laps} TARGET lap(s)')
         self.get_logger().info(
-            f'Circle: robot speed={self.speed:.3f}, target speed={self.target.speed:.3f} m/s, '
+            f'Circle: robot speed LIMIT={self.speed:.3f}, target speed={self.target.speed:.3f} m/s, '
             f'R={self.path.radius:.3f} m; end after {end}. Waiting for {self.odom_topic}.')
 
     def validate_parameters(self, parameters):
@@ -140,7 +140,7 @@ class Lab2Circle(Node):
             self.last_warning = warning
 
     def controller_callback(self):
-        """Advance the timed target, chase it, and send one command per tick."""
+        """Advance the timed target, follow the circle and synchronize phase."""
         command = Twist()
         now = time.monotonic()
         if self.started is None:
@@ -162,9 +162,11 @@ class Lab2Circle(Node):
         else:
             self.last_warning = None
             if not self.goal_reached and self.speed > 0:
-                command.linear.x, command.angular.z = pursuit_command(
+                command.linear.x, command.angular.z = circle_tracking_command(
                     self.current_x, self.current_y, self.current_yaw,
-                    tx, ty, self.speed, self.config.NAV_MAX_LINEAR_SPEED,
+                    self.progress.radians, self.target.phase, self.target.speed,
+                    self.path, self.speed, self.target.lookahead,
+                    self.config.NAV_MAX_LINEAR_SPEED,
                     self.config.NAV_MAX_ANGULAR_SPEED)
         self.publisher.publish(command)
         nan = float('nan')
