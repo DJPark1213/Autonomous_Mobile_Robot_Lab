@@ -102,37 +102,6 @@ CIRCLE_FIELDS = (
 )
 
 
-<<<<<<< HEAD
-def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
-                            path, lookahead,
-                            max_linear=.20, max_angular=.40):
-    """Follow the circle's vector field and synchronize UNWRAPPED phase.
-
-    Robot speed is calculated automatically. max_linear/max_angular are fixed
-    hardware/safety bounds from CircleConfig, never ROS experiment parameters.
-    The target is not moved/reset by this function. No target-bearing chase
-    or wrapped phase error is used: an unreachable target cannot cause a
-    turn-back command or erase a missed revolution.
-
-    q = tangent - radial_gain * radial_error * outward_normal.
-    v_ref = clip(target_speed + .5*R*(target_phase-robot_phase), 0, limit).
-    omega = time derivative of angle(q) + 1.2*heading_error.
-    Forward speed is reduced to reserve enough angular control authority.
-    """
-    values = (x, y, yaw, robot_phase, target_phase, target_speed,
-              lookahead, max_linear, max_angular)
-    if not all(math.isfinite(value) for value in values):
-        raise ValueError('Controller inputs must be finite')
-    if target_speed < 0 or min(lookahead, max_linear, max_angular) <= 0:
-        raise ValueError('Invalid controller speed/geometry limits')
-    limit = max_linear
-    radius, direction = path.radius, path.direction
-    rx, ry = x, y - direction * radius
-    rho = math.hypot(rx, ry)
-    phase_error = target_phase - robot_phase  # deliberately NOT wrapped
-    v_ref = max(0.0, min(limit, target_speed + .5 * radius * phase_error))
-    if v_ref == 0:
-=======
 def moving_goal_command(x, y, yaw, target_x, target_y, robot_speed,
                         max_linear=.20, max_angular=.40):
     """Pursue a position without any circle geometry or target-speed input.
@@ -150,7 +119,6 @@ def moving_goal_command(x, y, yaw, target_x, target_y, robot_speed,
     dx, dy = target_x - x, target_y - y
     distance = math.hypot(dx, dy)
     if distance < 1e-9:
->>>>>>> 851e7a26962b7bde80ef9d729c340096ac67368a
         return 0.0, 0.0
     error = normalize_angle(math.atan2(dy, dx) - yaw)
     linear = min(robot_speed, max_linear, distance) * max(0.0, math.cos(error))
