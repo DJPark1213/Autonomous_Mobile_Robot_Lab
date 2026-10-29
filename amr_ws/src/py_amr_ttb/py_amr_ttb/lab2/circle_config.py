@@ -15,10 +15,6 @@ class CircleConfig:
     NAV_MAX_ANGULAR_SPEED = 0.40  # Fixed angular bound (rad/s).
 
     CIRCLE_RADIUS = 0.75
-<<<<<<< HEAD
-=======
-    CIRCLE_SPEED = 0.12  # Robot speed UPPER LIMIT; actual v adapts to target phase.
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
     CIRCLE_TARGET_SPEED = 0.12  # Independent virtual target speed (m/s).
     CIRCLE_DURATION = 0.0  # >0: fixed seconds; 0: finish after target laps.
     CIRCLE_LOOKAHEAD = 0.30

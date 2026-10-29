@@ -30,10 +30,6 @@ class Lab2Circle(Node):
         self.config = CircleConfig
         defaults = {
             'radius': self.config.CIRCLE_RADIUS,
-<<<<<<< HEAD
-=======
-            'speed': self.config.CIRCLE_SPEED,
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
             'target_speed': self.config.CIRCLE_TARGET_SPEED,
             'lookahead': self.config.CIRCLE_LOOKAHEAD,
             'laps': self.config.CIRCLE_LAPS,
@@ -47,13 +43,6 @@ class Lab2Circle(Node):
             settings['radius'], settings['target_speed'], settings['lookahead'],
             settings['direction'], settings['laps'], settings['duration'])
         self.path = self.target.path
-<<<<<<< HEAD
-=======
-        self.speed = settings['speed']
-        if (not math.isfinite(self.speed)
-                or not 0 <= self.speed <= self.config.NAV_MAX_LINEAR_SPEED):
-            raise ValueError('speed must be between 0 and 0.20 m/s')
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
         prefix = settings['robot_namespace'].rstrip('/')
         if not prefix.startswith('/') or not prefix:
             raise ValueError('robot_namespace must be absolute, e.g. /TTB10')
@@ -76,11 +65,7 @@ class Lab2Circle(Node):
             'x', 'y', 'yaw', 'target_x', 'target_y', 'radial_error',
             'progress', 'laps', 'distance_to_start', 'done',
             'linear_command', 'angular_command', 'position_error',
-<<<<<<< HEAD
             'target_phase', 'target_laps', 'target_speed', 'robot_speed_limit',
-=======
-            'target_phase', 'target_laps', 'target_speed', 'robot_speed',
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
             'phase_gap', 'odom_fresh', 'elapsed',
             'measured_linear', 'measured_angular',
         )
@@ -95,7 +80,6 @@ class Lab2Circle(Node):
         end = (f'{self.target.duration:.1f} seconds' if self.target.duration > 0
                else f'{self.target.laps} TARGET lap(s)')
         self.get_logger().info(
-<<<<<<< HEAD
             f'Circle: automatic robot speed (fixed bound '
             f'{self.config.NAV_MAX_LINEAR_SPEED:.3f} m/s), '
             f'target speed={self.target.speed:.3f} m/s, '
@@ -112,32 +96,11 @@ class Lab2Circle(Node):
                 return SetParametersResult(
                     successful=False, reason=parameter.name + ' requires restarting circle')
             if parameter.name == 'target_speed':
-=======
-            f'Circle: robot speed LIMIT={self.speed:.3f}, target speed={self.target.speed:.3f} m/s, '
-            f'R={self.path.radius:.3f} m; end after {end}. Waiting for {self.odom_topic}.')
-
-    def validate_parameters(self, parameters):
-        """Allow live speeds; geometry and finish rules require restarting."""
-        fixed = {'radius', 'lookahead', 'laps', 'duration', 'direction', 'robot_namespace'}
-        for parameter in parameters:
-            if parameter.name in fixed:
-                return SetParametersResult(
-                    successful=False, reason=parameter.name + ' requires restarting circle')
-            if parameter.name in ('speed', 'target_speed'):
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
                 value = parameter.value
                 if (isinstance(value, bool) or not isinstance(value, (int, float))
                         or not math.isfinite(value) or value < 0):
                     return SetParametersResult(
-<<<<<<< HEAD
                         successful=False, reason='target_speed must be finite and nonnegative')
-=======
-                        successful=False, reason='Speeds must be finite and nonnegative')
-                if (parameter.name == 'speed'
-                        and value > self.config.NAV_MAX_LINEAR_SPEED):
-                    return SetParametersResult(
-                        successful=False, reason='Robot speed limit is 0.20 m/s')
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
         return SetParametersResult(successful=True)
 
     def odom_callback(self, message):
@@ -179,10 +142,6 @@ class Lab2Circle(Node):
         if self.started is None:
             self.publisher.publish(command)
             return
-<<<<<<< HEAD
-=======
-        self.speed = self.get_parameter('speed').value
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
         target_speed = self.get_parameter('target_speed').value
         tx, ty = self.target.advance(now, speed=target_speed)
         fresh = odometry_is_fresh(
@@ -197,19 +156,11 @@ class Lab2Circle(Node):
                 'Stale/invalid odometry: robot stopped; target clock continues.')
         else:
             self.last_warning = None
-<<<<<<< HEAD
             if not self.goal_reached:
                 command.linear.x, command.angular.z = circle_tracking_command(
                     self.current_x, self.current_y, self.current_yaw,
                     self.progress.radians, self.target.phase, self.target.speed,
                     self.path, self.target.lookahead,
-=======
-            if not self.goal_reached and self.speed > 0:
-                command.linear.x, command.angular.z = circle_tracking_command(
-                    self.current_x, self.current_y, self.current_yaw,
-                    self.progress.radians, self.target.phase, self.target.speed,
-                    self.path, self.speed, self.target.lookahead,
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
                     self.config.NAV_MAX_LINEAR_SPEED,
                     self.config.NAV_MAX_ANGULAR_SPEED)
         self.publisher.publish(command)
@@ -234,11 +185,7 @@ class Lab2Circle(Node):
             'measured_linear_mps': self.measured_linear if fresh else nan,
             'measured_angular_radps': self.measured_angular if fresh else nan,
             'target_speed_mps': 0.0 if self.goal_reached else self.target.speed,
-<<<<<<< HEAD
             'robot_speed_limit_mps': self.config.NAV_MAX_LINEAR_SPEED,
-=======
-            'robot_speed_mps': 0.0 if self.goal_reached else self.speed,
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
             'radius_m': self.path.radius, 'direction': self.path.direction,
             'lookahead_m': self.target.lookahead,
             'requested_laps': self.target.laps,
@@ -261,12 +208,8 @@ class Lab2Circle(Node):
             'angular_command': 'angular_command_radps',
             'position_error': 'position_error_m',
             'target_phase': 'target_phase_rad', 'target_laps': 'target_laps',
-<<<<<<< HEAD
             'target_speed': 'target_speed_mps',
             'robot_speed_limit': 'robot_speed_limit_mps',
-=======
-            'target_speed': 'target_speed_mps', 'robot_speed': 'robot_speed_mps',
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
             'phase_gap': 'phase_gap_rad', 'odom_fresh': 'odom_fresh',
             'elapsed': 'elapsed_s', 'measured_linear': 'measured_linear_mps',
             'measured_angular': 'measured_angular_radps',

@@ -30,7 +30,7 @@ class Config:
     planner: str = 'potential'
     max_linear: float = 0.18
     max_angular: float = 0.7
-    robot_radius: float = 0.19
+    robot_radius: float = 0.17
     safety_margin: float = 0.08
     lookahead: float = 0.55
     wall_distance: float = 0.40
