@@ -11,9 +11,9 @@ def generate_launch_description():
     defaults = {
         'linear_gain': '1.0', 'angular_gain': '2.0',
         'linear_ki': '0.01', 'linear_kd': '0.02',
-        'angular_ki': '0.01', 'angular_kd': '0.03', 'align_enter': '0.20',
+        'angular_ki': '0.01', 'angular_kd': '0.03',
         'max_linear_speed': '0.4', 'max_angular_speed': '0.4',
-        'position_tolerance': '0.05', 'yaw_tolerance': '0.10',
+        'position_tolerance': '0.05',
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=value)

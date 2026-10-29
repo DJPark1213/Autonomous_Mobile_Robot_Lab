@@ -65,7 +65,7 @@ class PIDTests(unittest.TestCase):
         self.assertAlmostEqual(control.update(.12, 0, 1, .1, .2, .4), .015)
 
     def test_goal_turning_and_arrival_reset_distance_pid(self):
-        control = GoalController(LabConfig(), .01, .02, .01, .03, .2)
+        control = GoalController(LabConfig(), .01, .02, .01, .03)
         v, w, reached = control.update(0, 0, math.pi, 1, 0, .1)
         self.assertEqual(v, 0)
         self.assertNotEqual(w, 0)
@@ -77,6 +77,15 @@ class PIDTests(unittest.TestCase):
         self.assertEqual(control.update(.1, 0, 0, .1, 0, .1), (0, 0, True))
         self.assertEqual(control.distance_pid.integral, 0)
         self.assertIsNone(control.heading_pid.previous_error)
+
+    def test_goal_ahead_moves_and_turns_together_in_both_directions(self):
+        for target_y in (1.5, -1.5):
+            control = GoalController(LabConfig(), .01, .02, .01, .03)
+            v, w, reached = control.update(0, 0, 0, 1.5, target_y, .1)
+            self.assertGreater(v, 0)
+            self.assertLess(v, LabConfig.NAV_MAX_LINEAR_SPEED)
+            self.assertGreater(w * target_y, 0)
+            self.assertFalse(reached)
 
 
 if __name__ == '__main__':

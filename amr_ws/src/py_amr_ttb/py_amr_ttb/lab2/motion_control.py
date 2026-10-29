@@ -60,22 +60,19 @@ class CircleSpeedController:
 
 
 class GoalController:
-    """Separate position PID from the decision to align before advancing."""
+    """Steer toward the goal while scaling forward speed by heading error."""
 
-    def __init__(self, config, linear_ki, linear_kd, angular_ki, angular_kd,
-                 align_enter):
+    def __init__(self, config, linear_ki, linear_kd, angular_ki, angular_kd):
         """Create independent distance and heading PID histories."""
         self.config = config
         self.distance_pid = PID(config.NAV_LINEAR_GAIN, linear_ki, linear_kd)
         self.heading_pid = PID(config.NAV_ANGULAR_GAIN, angular_ki, angular_kd,
                                angular=True)
-        self.recovery = AlignmentRecovery(align_enter, config.NAV_YAW_TOLERANCE)
 
     def reset(self):
         """Clear control and alignment state on a stop."""
         self.distance_pid.reset()
         self.heading_pid.reset()
-        self.recovery.reset()
 
     def update(self, x, y, yaw, tx, ty, dt):
         """Return linear/angular command and arrival flag for one target."""
@@ -85,11 +82,13 @@ class GoalController:
             return 0.0, 0.0, True
         error = math.atan2(ty - y, tx - x) - yaw
         error = math.atan2(math.sin(error), math.cos(error))
-        state = self.recovery.update(error)
         angular = self.heading_pid.update(error, dt, -self.config.NAV_MAX_ANGULAR_SPEED,
                                           self.config.NAV_MAX_ANGULAR_SPEED)
-        if state == 'ALIGN':
+        # Drive along an arc for targets ahead; turn in place only when the
+        # target is at least 90 degrees away, avoiding motion away from it.
+        speed_limit = self.config.NAV_MAX_LINEAR_SPEED * max(0.0, math.cos(error))
+        if speed_limit == 0.0:
             self.distance_pid.reset()
             return 0.0, angular, False
-        linear = self.distance_pid.update(distance, dt, 0.0, self.config.NAV_MAX_LINEAR_SPEED)
+        linear = self.distance_pid.update(distance, dt, 0.0, speed_limit)
         return linear, angular, False

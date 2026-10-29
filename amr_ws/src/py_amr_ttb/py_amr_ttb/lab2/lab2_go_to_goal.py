@@ -31,18 +31,14 @@ class Lab2GoToGoal(Node):
             ('max_linear_speed', 'NAV_MAX_LINEAR_SPEED'),
             ('max_angular_speed', 'NAV_MAX_ANGULAR_SPEED'),
             ('position_tolerance', 'NAV_POSITION_TOLERANCE'),
-            ('yaw_tolerance', 'NAV_YAW_TOLERANCE'),
         ):
             value = self.declare_parameter(name, getattr(self.config, attribute)).value
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f'{name} must be finite and positive')
-            if name == 'yaw_tolerance' and value > math.pi:
-                raise ValueError('yaw_tolerance must be <= pi radians')
             setattr(self.config, attribute, value)
         pid_settings = {}
         for name, default in {'linear_ki': 0.01, 'linear_kd': 0.02,
-                              'angular_ki': 0.01, 'angular_kd': 0.03,
-                              'align_enter': max(0.20, 2 * self.config.NAV_YAW_TOLERANCE)}.items():
+                              'angular_ki': 0.01, 'angular_kd': 0.03}.items():
             value = self.declare_parameter(name, default).value
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f'{name} must be finite and nonnegative')

@@ -68,8 +68,9 @@ this does not detect a publisher repeatedly sending a frozen pose. Shutdown
 sends a zero command when the ROS context is still available.
 
 Square uses the proportional waypoint controller. Go-to-goal uses separate
-distance and heading PID controllers, with alignment hysteresis: enter turning
-at `align_enter`, resume forward motion at `yaw_tolerance`. Speed decreases with target distance. Reaching a corner publishes
+distance and heading PID controllers that drive and turn together. The forward
+speed limit scales by `max(0, cos(heading_error))`, so it turns in place only
+when the goal is at least 90 degrees away. Speed decreases with target distance. Reaching a corner publishes
 zero and advances only one target. Arrival does not require a final heading.
 Circle uses its own pursuit algorithm, path progress and lap detection; see
 [CIRCLE_README.md](CIRCLE_README.md).
@@ -80,7 +81,8 @@ Circle uses its own pursuit algorithm, path progress and lap detection; see
 
 Go-to-goal uses bounded distance/heading PID with conditional anti-windup.
 `linear_gain` and `angular_gain` are the proportional gains. Both PID histories
-reset on a stop or timing discontinuity; distance PID resets during alignment. Its goal remains (1.5, 1.5) in the fixed starting frame.
+reset on arrival, stale odometry, or timing discontinuity. Its goal remains
+(1.5, 1.5) in the fixed starting frame.
 The following startup parameters apply only to this node; square/star settings
 are unchanged. Restart the node to apply a different experiment configuration.
 
@@ -91,8 +93,6 @@ are unchanged. Restart the node to apply a different experiment configuration.
 | `max_linear_speed` | 0.4 | Forward command limit, m/s |
 | `max_angular_speed` | 0.4 | Turning command limit, rad/s |
 | `position_tolerance` | 0.05 | Arrival radius, m |
-| `yaw_tolerance` | 0.10 | Leave alignment below this heading error, rad |
-| `align_enter` | 0.20 | Enter alignment above this error, rad; must exceed yaw tolerance |
 | `linear_ki` / `linear_kd` | 0.01 / 0.02 | Distance PID integral / derivative gains |
 | `angular_ki` / `angular_kd` | 0.01 / 0.03 | Heading PID integral / derivative gains |
 
