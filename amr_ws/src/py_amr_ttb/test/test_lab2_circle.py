@@ -45,9 +45,9 @@ class Node:
         return NS(info=lambda message: None, warning=lambda message: None)
 
 
-def odom(x=0.0, y=0.0, yaw=0.0):
+def odom(x=0.0, y=0.0, yaw=0.0, speed=0.0):
     """Make a planar pose fixture."""
-    return NS(pose=NS(pose=NS(
+    return NS(twist=NS(twist=NS(linear=NS(x=speed))), pose=NS(pose=NS(
         position=NS(x=x, y=y),
         orientation=NS(x=0.0, y=0.0, z=math.sin(yaw / 2), w=math.cos(yaw / 2)),
     )))
@@ -127,13 +127,15 @@ class CircleTests(unittest.TestCase):
 
     def test_rotated_translated_start_one_and_two_laps_with_disturbance(self):
         for direction, laps, radius, lookahead in ((1, 1, .75, .30), (-1, 2, .50, .25)):
-            with self.subTest(direction=direction), patch('time.monotonic', return_value=10), \
+            with self.subTest(direction=direction), patch('time.monotonic', return_value=10) as clock, \
                     patch.object(Node, 'overrides', {'direction': direction, 'laps': laps,
                                                     'radius': radius, 'lookahead': lookahead}):
                 node = self.controller()
                 x, y, yaw = 8.0, -3.0, 1.2
+                measured = 0.0
                 for step in range(3000):
-                    node.odom_callback(odom(x, y, yaw))
+                    clock.return_value = 10 + step * .1
+                    node.odom_callback(odom(x, y, yaw, measured))
                     node.controller_callback()
                     cmd = self.command(node)
                     self.assertLessEqual(abs(cmd.linear.x), .20)
@@ -141,6 +143,7 @@ class CircleTests(unittest.TestCase):
                     self.assertFalse(node.tracking_failed)
                     if node.goal_reached:
                         break
+                    measured = cmd.linear.x
                     # Exact integration of the ideal constant-twist step.
                     dt = .1
                     if abs(cmd.angular.z) > 1e-10:
@@ -173,6 +176,35 @@ class CircleTests(unittest.TestCase):
             node.odom_callback(odom())
             node.controller_callback()
             self.assert_stopped(node)
+
+    def test_alignment_hysteresis_restart_and_invalid_speed_reset(self):
+        with patch('time.monotonic', return_value=10) as clock:
+            node = self.controller()
+            node.odom_callback(odom())
+            # At the start the target bearing is about 0.20 rad.
+            node.odom_callback(odom(yaw=-1.2))
+            node.controller_callback()
+            self.assertEqual(node.recovery.state, 'ALIGN')
+            self.assertEqual(self.command(node).linear.x, 0)
+            clock.return_value = 10.1
+            node.odom_callback(odom(yaw=-.7))
+            node.controller_callback()
+            self.assertEqual(node.recovery.state, 'ALIGN')
+            clock.return_value = 10.2
+            node.odom_callback(odom())
+            node.controller_callback()
+            self.assertEqual(node.recovery.state, 'FOLLOW')
+            self.assertAlmostEqual(self.command(node).linear.x, .015)
+            clock.return_value = 10.3
+            node.odom_callback(odom(speed=float('nan')))
+            node.controller_callback()
+            self.assert_stopped(node)
+            self.assertEqual(node.recovery.state, 'STOP')
+            self.assertEqual(node.speed_control.pid.integral, 0)
+            clock.return_value = 10.4
+            node.odom_callback(odom())
+            node.controller_callback()
+            self.assertAlmostEqual(self.command(node).linear.x, .015)
 
     def test_speed_limit_preserves_curvature_and_bad_parameters_fail(self):
         v, w = pursuit_command(0, 0, 0, .05, .05, .2, .2, .4)

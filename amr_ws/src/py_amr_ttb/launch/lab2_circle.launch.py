@@ -13,6 +13,10 @@ def generate_launch_description():
     """Launch python -m with ordinary ROS parameter arguments."""
     settings = {
         'radius': C.CIRCLE_RADIUS,
+<<<<<<< HEAD
+=======
+        'speed': C.CIRCLE_SPEED,
+>>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
         'target_speed': C.CIRCLE_TARGET_SPEED,
         'duration': C.CIRCLE_DURATION,
         'lookahead': C.CIRCLE_LOOKAHEAD,

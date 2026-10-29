@@ -15,7 +15,7 @@ from py_amr_ttb.lab_config import LabConfig
 from py_amr_ttb.odom_utils import (
     normalize_angle, odometry_is_fresh, read_planar_pose, relative_pose,
 )
-from py_amr_ttb.lab2.navigation import waypoint_command
+from py_amr_ttb.lab2.motion_control import GoalController
 
 
 class Lab2GoToGoal(Node):
@@ -39,6 +39,16 @@ class Lab2GoToGoal(Node):
             if name == 'yaw_tolerance' and value > math.pi:
                 raise ValueError('yaw_tolerance must be <= pi radians')
             setattr(self.config, attribute, value)
+        pid_settings = {}
+        for name, default in {'linear_ki': 0.01, 'linear_kd': 0.02,
+                              'angular_ki': 0.01, 'angular_kd': 0.03,
+                              'align_enter': max(0.20, 2 * self.config.NAV_YAW_TOLERANCE)}.items():
+            value = self.declare_parameter(name, default).value
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f'{name} must be finite and nonnegative')
+            pid_settings[name] = value
+        self.control = GoalController(self.config, **pid_settings)
+        self.last_control_time = None
         self.initial_x = None
         self.initial_y = None
         self.initial_yaw = None
@@ -114,20 +124,28 @@ class Lab2GoToGoal(Node):
     def controller_callback(self):
         """Publish a command every tick, including a stop on missing/stale pose."""
         command = Twist()
+        now = time.monotonic()
+        dt = self.config.CONTROL_PERIOD if self.last_control_time is None else now - self.last_control_time
+        self.last_control_time = now
+        if dt <= 0 or dt > self.config.SENSOR_TIMEOUT:
+            self.control.reset()
+            dt = self.config.CONTROL_PERIOD
         if self.goal_reached:
+            self.control.reset()
             self.publish_command(command)
             return
         if not odometry_is_fresh(
             time.monotonic(), self.last_odom_time, self.config.SENSOR_TIMEOUT,
         ):
+            self.control.reset()
             self.warn_once('Missing, invalid, or stale odometry: stopping.')
             self.publish_command(command)
             return
         self.last_warning = None
         target_x, target_y = (self.target_x, self.target_y)
-        linear, angular, reached = waypoint_command(
+        linear, angular, reached = self.control.update(
             self.current_x, self.current_y, self.current_yaw,
-            target_x, target_y, self.config,
+            target_x, target_y, dt,
         )
         command.linear.x = linear
         command.angular.z = angular

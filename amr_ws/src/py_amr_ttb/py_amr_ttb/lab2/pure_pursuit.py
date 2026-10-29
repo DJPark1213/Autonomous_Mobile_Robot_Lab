@@ -96,19 +96,31 @@ CIRCLE_FIELDS = (
     'position_error_m', 'radial_error_m', 'phase_gap_rad',
     'linear_command_mps', 'angular_command_radps',
     'measured_linear_mps', 'measured_angular_radps',
+<<<<<<< HEAD
     'target_speed_mps', 'robot_speed_limit_mps', 'radius_m', 'direction',
+=======
+    'target_speed_mps', 'robot_speed_mps', 'radius_m', 'direction',
+>>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
     'lookahead_m', 'requested_laps', 'duration_limit_s',
     'odom_age_s', 'odom_fresh', 'done', 'data_source',
 )
 
 
 def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
+<<<<<<< HEAD
                             path, lookahead,
                             max_linear=.20, max_angular=.40):
     """Follow the circle's vector field and synchronize UNWRAPPED phase.
 
     Robot speed is calculated automatically. max_linear/max_angular are fixed
     hardware/safety bounds from CircleConfig, never ROS experiment parameters.
+=======
+                            path, speed_limit, lookahead,
+                            max_linear=.20, max_angular=.40):
+    """Follow the circle's vector field and synchronize UNWRAPPED phase.
+
+    speed_limit is a capability limit, never a forced constant speed.
+>>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
     The target is not moved/reset by this function. No target-bearing chase
     or wrapped phase error is used: an unreachable target cannot cause a
     turn-back command or erase a missed revolution.
@@ -118,6 +130,7 @@ def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
     omega = time derivative of angle(q) + 1.2*heading_error.
     Forward speed is reduced to reserve enough angular control authority.
     """
+<<<<<<< HEAD
     values = (x, y, yaw, robot_phase, target_phase, target_speed,
               lookahead, max_linear, max_angular)
     if not all(math.isfinite(value) for value in values):
@@ -125,6 +138,17 @@ def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
     if target_speed < 0 or min(lookahead, max_linear, max_angular) <= 0:
         raise ValueError('Invalid controller speed/geometry limits')
     limit = max_linear
+=======
+    values = (x, y, yaw, robot_phase, target_phase, target_speed, speed_limit,
+              lookahead, max_linear, max_angular)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('Controller inputs must be finite')
+    if min(target_speed, speed_limit) < 0 or min(lookahead, max_linear, max_angular) <= 0:
+        raise ValueError('Invalid controller speed/geometry limits')
+    limit = min(speed_limit, max_linear)
+    if limit == 0:
+        return 0.0, 0.0
+>>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
     radius, direction = path.radius, path.direction
     rx, ry = x, y - direction * radius
     rho = math.hypot(rx, ry)
