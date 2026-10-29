@@ -96,88 +96,33 @@ CIRCLE_FIELDS = (
     'position_error_m', 'radial_error_m', 'phase_gap_rad',
     'linear_command_mps', 'angular_command_radps',
     'measured_linear_mps', 'measured_angular_radps',
-<<<<<<< HEAD
     'target_speed_mps', 'robot_speed_limit_mps', 'radius_m', 'direction',
-=======
-    'target_speed_mps', 'robot_speed_mps', 'radius_m', 'direction',
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
     'lookahead_m', 'requested_laps', 'duration_limit_s',
     'odom_age_s', 'odom_fresh', 'done', 'data_source',
 )
 
 
-def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
-<<<<<<< HEAD
-                            path, lookahead,
-                            max_linear=.20, max_angular=.40):
-    """Follow the circle's vector field and synchronize UNWRAPPED phase.
+def moving_goal_command(x, y, yaw, target_x, target_y, robot_speed,
+                        max_linear=.20, max_angular=.40):
+    """Pursue a position without any circle geometry or target-speed input.
 
-    Robot speed is calculated automatically. max_linear/max_angular are fixed
-    hardware/safety bounds from CircleConfig, never ROS experiment parameters.
-=======
-                            path, speed_limit, lookahead,
-                            max_linear=.20, max_angular=.40):
-    """Follow the circle's vector field and synchronize UNWRAPPED phase.
-
-    speed_limit is a capability limit, never a forced constant speed.
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
-    The target is not moved/reset by this function. No target-bearing chase
-    or wrapped phase error is used: an unreachable target cannot cause a
-    turn-back command or erase a missed revolution.
-
-    q = tangent - radial_gain * radial_error * outward_normal.
-    v_ref = clip(target_speed + .5*R*(target_phase-robot_phase), 0, limit).
-    omega = time derivative of angle(q) + 1.2*heading_error.
-    Forward speed is reduced to reserve enough angular control authority.
+    robot_speed is the requested forward limit. Distance and heading reduce
+    it near the goal or during turns. No radial or phase correction is used.
     """
-<<<<<<< HEAD
-    values = (x, y, yaw, robot_phase, target_phase, target_speed,
-              lookahead, max_linear, max_angular)
+    values = (x, y, yaw, target_x, target_y, robot_speed, max_linear, max_angular)
     if not all(math.isfinite(value) for value in values):
-        raise ValueError('Controller inputs must be finite')
-    if target_speed < 0 or min(lookahead, max_linear, max_angular) <= 0:
-        raise ValueError('Invalid controller speed/geometry limits')
-    limit = max_linear
-=======
-    values = (x, y, yaw, robot_phase, target_phase, target_speed, speed_limit,
-              lookahead, max_linear, max_angular)
-    if not all(math.isfinite(value) for value in values):
-        raise ValueError('Controller inputs must be finite')
-    if min(target_speed, speed_limit) < 0 or min(lookahead, max_linear, max_angular) <= 0:
-        raise ValueError('Invalid controller speed/geometry limits')
-    limit = min(speed_limit, max_linear)
-    if limit == 0:
+        raise ValueError('Follower inputs must be finite')
+    if robot_speed < 0 or min(max_linear, max_angular) <= 0:
+        raise ValueError('Invalid follower speed limits')
+    if robot_speed == 0:
         return 0.0, 0.0
->>>>>>> 77d1cce42b71b4269be683b4b912eafb5673ea7d
-    radius, direction = path.radius, path.direction
-    rx, ry = x, y - direction * radius
-    rho = math.hypot(rx, ry)
-    phase_error = target_phase - robot_phase  # deliberately NOT wrapped
-    v_ref = max(0.0, min(limit, target_speed + .5 * radius * phase_error))
-    if v_ref == 0:
+    dx, dy = target_x - x, target_y - y
+    distance = math.hypot(dx, dy)
+    if distance < 1e-9:
         return 0.0, 0.0
-    radial_gain = 1.0 / lookahead
-    if rho < .05 * radius:
-        # The circle's center has no unique tangent. Escape outward in a fixed
-        # world direction; unlike chasing a fast target, this bearing is fixed.
-        desired_yaw = -direction * math.pi / 2
-        coefficient = 0.0
-    else:
-        ex, ey = rx / rho, ry / rho
-        a = radial_gain * (rho - radius)
-        qx, qy = -direction * ey - a * ex, direction * ex - a * ey
-        desired_yaw = math.atan2(qy, qx)
-        c, s = math.cos(yaw), math.sin(yaw)
-        # Analytic derivative of field heading along the actual robot motion:
-        # psi_dot = polar_dot + d*k_r*rho_dot/(1+(k_r*e_r)^2).
-        coefficient = ((ex * s - ey * c) / rho
-                       + direction * radial_gain * (ex * c + ey * s) / (1 + a*a))
-    heading_error = normalize_angle(desired_yaw - yaw)
-    feedback = max(-max_angular, min(max_angular, 1.2 * heading_error))
-    linear = v_ref * max(0.0, math.cos(heading_error))
-    if abs(coefficient) > 1e-9:
-        linear = min(linear, max(0.0, max_angular - abs(feedback)) / abs(coefficient))
-    angular = max(-max_angular, min(max_angular, coefficient * linear + feedback))
+    error = normalize_angle(math.atan2(dy, dx) - yaw)
+    linear = min(robot_speed, max_linear, distance) * max(0.0, math.cos(error))
+    angular = max(-max_angular, min(max_angular, 2.0 * error))
     return linear, angular
 
 
