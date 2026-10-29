@@ -50,6 +50,9 @@ setup(
             'lab2_square = py_amr_ttb.lab2.lab2_square:main',
             'lab2_star = py_amr_ttb.lab2.lab2_star:main',
             'lab2_heart = py_amr_ttb.lab2.lab2_heart:main',
+            'lab3_controller = py_amr_ttb.lab3.node:main',
+            'lab3_simulate = py_amr_ttb.lab3.simulate:main',
+            'lab3_plot = py_amr_ttb.lab3.plot:main',
         ],
     },
 )

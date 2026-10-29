@@ -87,3 +87,143 @@ def pursuit_command(x, y, yaw, target_x, target_y, speed, max_linear, max_angula
     if abs(curvature) > 1e-12:
         linear = min(linear, max_angular / abs(curvature))
     return linear, linear * curvature
+
+
+CIRCLE_FIELDS = (
+    'elapsed_s', 'odom_x_m', 'odom_y_m', 'odom_yaw_rad',
+    'x_m', 'y_m', 'yaw_rad', 'target_x_m', 'target_y_m',
+    'target_phase_rad', 'target_laps', 'robot_phase_rad',
+    'position_error_m', 'radial_error_m', 'phase_gap_rad',
+    'linear_command_mps', 'angular_command_radps',
+    'measured_linear_mps', 'measured_angular_radps',
+    'target_speed_mps', 'robot_speed_limit_mps', 'radius_m', 'direction',
+    'lookahead_m', 'requested_laps', 'duration_limit_s',
+    'odom_age_s', 'odom_fresh', 'done', 'data_source',
+)
+
+
+def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
+                            path, lookahead,
+                            max_linear=.20, max_angular=.40):
+    """Follow the circle's vector field and synchronize UNWRAPPED phase.
+
+    Robot speed is calculated automatically. max_linear/max_angular are fixed
+    hardware/safety bounds from CircleConfig, never ROS experiment parameters.
+    The target is not moved/reset by this function. No target-bearing chase
+    or wrapped phase error is used: an unreachable target cannot cause a
+    turn-back command or erase a missed revolution.
+
+    q = tangent - radial_gain * radial_error * outward_normal.
+    v_ref = clip(target_speed + .5*R*(target_phase-robot_phase), 0, limit).
+    omega = time derivative of angle(q) + 1.2*heading_error.
+    Forward speed is reduced to reserve enough angular control authority.
+    """
+    values = (x, y, yaw, robot_phase, target_phase, target_speed,
+              lookahead, max_linear, max_angular)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('Controller inputs must be finite')
+    if target_speed < 0 or min(lookahead, max_linear, max_angular) <= 0:
+        raise ValueError('Invalid controller speed/geometry limits')
+    limit = max_linear
+    radius, direction = path.radius, path.direction
+    rx, ry = x, y - direction * radius
+    rho = math.hypot(rx, ry)
+    phase_error = target_phase - robot_phase  # deliberately NOT wrapped
+    v_ref = max(0.0, min(limit, target_speed + .5 * radius * phase_error))
+    if v_ref == 0:
+        return 0.0, 0.0
+    radial_gain = 1.0 / lookahead
+    if rho < .05 * radius:
+        # The circle's center has no unique tangent. Escape outward in a fixed
+        # world direction; unlike chasing a fast target, this bearing is fixed.
+        desired_yaw = -direction * math.pi / 2
+        coefficient = 0.0
+    else:
+        ex, ey = rx / rho, ry / rho
+        a = radial_gain * (rho - radius)
+        qx, qy = -direction * ey - a * ex, direction * ex - a * ey
+        desired_yaw = math.atan2(qy, qx)
+        c, s = math.cos(yaw), math.sin(yaw)
+        # Analytic derivative of field heading along the actual robot motion:
+        # psi_dot = polar_dot + d*k_r*rho_dot/(1+(k_r*e_r)^2).
+        coefficient = ((ex * s - ey * c) / rho
+                       + direction * radial_gain * (ex * c + ey * s) / (1 + a*a))
+    heading_error = normalize_angle(desired_yaw - yaw)
+    feedback = max(-max_angular, min(max_angular, 1.2 * heading_error))
+    linear = v_ref * max(0.0, math.cos(heading_error))
+    if abs(coefficient) > 1e-9:
+        linear = min(linear, max(0.0, max_angular - abs(feedback)) / abs(coefficient))
+    angular = max(-max_angular, min(max_angular, coefficient * linear + feedback))
+    return linear, angular
+
+
+class TimedCircleTarget:
+    """Timed target; lookahead sets only its initial chord distance.
+
+    No robot pose/progress is an input. Speed changes preserve target phase.
+    """
+
+    def __init__(self, radius, speed=.12, lookahead=.30, direction=1,
+                 laps=1, duration=0.0):
+        self.path = CirclePath(radius, direction)
+        if not math.isfinite(speed) or speed < 0:
+            raise ValueError('target_speed must be finite and nonnegative')
+        if not math.isfinite(lookahead) or not 0 < lookahead < 2 * radius:
+            raise ValueError('lookahead must be positive and less than 2 * radius')
+        if isinstance(laps, bool) or not isinstance(laps, int) or laps < 1:
+            raise ValueError('laps must be a positive integer')
+        if not math.isfinite(duration) or duration < 0:
+            raise ValueError('duration must be finite and nonnegative')
+        self.lookahead = lookahead
+        self.speed = speed
+        self.initial_phase = 2 * math.asin(lookahead / (2 * radius))
+        self.phase = self.initial_phase
+        self.laps = laps
+        self.duration = duration
+        self.elapsed = 0.0
+        self.last_time = None
+        self.done = False
+
+    def start(self, now):
+        """Fix the clock once after the first valid robot origin is captured."""
+        if not math.isfinite(now):
+            raise ValueError('time must be finite')
+        if self.last_time is None:
+            self.last_time = now
+
+    def advance(self, now, speed=None):
+        """Integrate old speed to now; a new speed begins on this tick."""
+        if not math.isfinite(now):
+            raise ValueError('time must be finite')
+        if speed is not None and (not math.isfinite(speed) or speed < 0):
+            raise ValueError('target_speed must be finite and nonnegative')
+        self.start(now)
+        dt = now - self.last_time
+        if dt < 0:
+            raise ValueError('target clock must be monotonic')
+        self.last_time = now
+        if not self.done:
+            if self.duration > 0:
+                dt = min(dt, max(0.0, self.duration - self.elapsed))
+                self.phase += self.speed * dt / self.path.radius
+                self.elapsed += dt
+                self.done = self.elapsed >= self.duration - 1e-10
+            else:
+                remaining = max(0.0, math.tau * self.laps
+                                - (self.phase - self.initial_phase))
+                advance = self.speed * dt / self.path.radius
+                if advance >= remaining - 1e-12 and self.speed > 0:
+                    self.elapsed += remaining * self.path.radius / self.speed
+                    self.phase = self.initial_phase + math.tau * self.laps
+                    self.done = True
+                else:
+                    self.phase += advance
+                    self.elapsed += dt
+        if speed is not None:
+            self.speed = speed
+        return self.path.point(self.phase)
+
+    @property
+    def completed_laps(self):
+        """Return target revolutions excluding the one-time initial lead."""
+        return (self.phase - self.initial_phase) / math.tau
