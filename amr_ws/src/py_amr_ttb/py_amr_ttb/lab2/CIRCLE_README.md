@@ -1,184 +1,82 @@
-# Jianyu's Lab 2 Task 3: circle pursuit
+# Lab 2: follow an independently moving circular goal
 
-Circle pursuit is now integrated into the repository. Circle retains its own
-configuration, odometry helpers, path tracking and plotting. All launch files
-are under the ROS package's `launch/` directory. Circle tests live under its
-`test/` directory, matching the commands below.
+Only the virtual goal is constrained to a circle. The robot pursues its current
+position and may cut inside or leave the circle. Its controller receives only
+robot pose, goal position, robot_speed and hardware bounds; it has no circle
+radius, target phase, target speed, radial-error or phase-gap feedback.
 
-## Added files (relative to amr_ws/src/py_amr_ttb)
-
-| File | Purpose |
-| --- | --- |
-| `py_amr_ttb/lab2/circle_config.py` | Circle-owned defaults, including robot settings |
-| `py_amr_ttb/lab2/circle_odom.py` | Circle-owned pose conversion and freshness helpers |
-| `py_amr_ttb/lab2/pure_pursuit.py` | Circle geometry, lookahead target, curvature and signed progress |
-| `py_amr_ttb/lab2/lab2_circle.py` | Feedback node, diagnostics and stopping |
-| `py_amr_ttb/lab2/circle_plot.py` | Independent odometry recorder and plotter |
-| `launch/lab2_circle.launch.py` | Launches the Python module with ROS parameters |
-| `test/test_lab2_circle.py` | Geometry and actual-node callback tests using ROS doubles |
-| `test/test_lab2_circle_plot.py` | Plot CLI tests using synthetic fixtures |
-| `py_amr_ttb/lab2/CIRCLE_README.md` | This guide |
-
-The existing `setup.py` already discovers packages with `find_packages()` and
-installs `launch/*.launch.py`. Rebuilding therefore installs the added Python
-modules and launch file. The new launch uses `python -m` through `ExecuteProcess`;
-it does not need a shared console-script entry added to `setup.py`.
+The fixed starting frame has x forward and y left. The goal position is
+`(R*sin(phase), direction*R*(1-cos(phase)))`. Its phase advances by
+`target_speed*dt/R` on a monotonic clock, independent of robot motion.
+`lookahead` sets the initial goal lead (a chord distance), not a robot path.
 
 ## Build and run
 
-Copy only the added `amr_ws` files into the corresponding existing workspace,
-or check out the contribution branch on the Ubuntu robot computer. From the
-actual workspace (here `~/amr_ws`):
-
 ```bash
-source /opt/ros/humble/setup.bash
 cd ~/amr_ws
 colcon build --symlink-install --packages-select py_amr_ttb
 source install/setup.bash
-ros2 launch py_amr_ttb lab2_circle.launch.py
+ros2 launch py_amr_ttb lab2_circle.launch.py target_speed:=0.10 robot_speed:=0.15
 ```
 
-Defaults: radius 0.75 m, speed 0.12 m/s, lookahead 0.30 m, one CCW lap, namespace
-`/TTB10`. These dimensions are choices; the supplied assignment screenshot did
-not specify a radius. Override them without modifying source:
-
-```bash
-ros2 launch py_amr_ttb lab2_circle.launch.py radius:=0.50 speed:=0.10 lookahead:=0.25 laps:=1 direction:=-1
-```
-
-`direction=1` means CCW/left; `-1` means CW/right. `laps` is an integer >=1,
-`0 < lookahead < 2*radius`, `0 < speed <= 0.20` m/s. For another robot use
-`robot_namespace:=/TTBXX` and match the recorder's `--topic` and plotting topics.
-Parameters are read at startup. Circle defaults live in `circle_config.py`.
-
-The robot starts at the circumference, facing the tangent. The first valid pose
-defines the fixed starting frame: x forward, y left. The center is
-`(0, direction*radius)`. Default CCW coverage is x -0.75..+0.75 m, y 0..1.5 m,
-plus space for the robot footprint and errors. No external odometry reset is
-needed. Keep the robot still during origin capture; do not reset during a run.
-
-## Record a complete demonstration
-
-Run only one motion controller. Keep the robot stationary until the recorder
-reports readiness. All new terminals need ROS/workspace setup sourcing.
-
-Terminal 1, start CSV recording first:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/amr_ws/install/setup.bash
-cd ~/amr_ws
-python3 -m py_amr_ttb.lab2.circle_plot --record lab_runs/circle/run01.csv
-```
-
-Wait for `First valid odometry received. Ready to start controller.`
-
-Terminal 2, start motion:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/amr_ws/install/setup.bash
-ros2 launch py_amr_ttb lab2_circle.launch.py
-```
-
-Terminal 3, open time-series plots after the controller advertises its topics:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/amr_ws/install/setup.bash
-ros2 run rqt_plot rqt_plot /TTB10/lab2_circle/x/data /TTB10/lab2_circle/y/data /TTB10/lab2_circle/radial_error/data /TTB10/lab2_circle/laps/data
-```
-
-After `Circle completed ... Stopped`, verify the robot has stopped, press Ctrl+C
-in Terminal 2 and then Terminal 1. Closing rqt_plot alone does not stop motion.
-Use Ctrl+C in the controller terminal to stop a run early.
-
-In Terminal 1, plot the recorded data using the actual radius and direction:
-
-```bash
-python3 -m py_amr_ttb.lab2.circle_plot --csv lab_runs/circle/run01.csv --radius 0.75 --direction 1 --output lab_runs/circle/run01.png
-```
-
-The PNG overlays measured odometry and the ideal circle; the JSON reports
-radial RMSE, maximum radial error, directed laps and closure error. These errors
-are relative to odometry, not external ground truth. Use `run02` etc. for new
-runs; recording and plotting refuse to overwrite earlier results.
-
-## Algorithm and stopping
-
-Choose the forward circle/lookahead-circle intersection, transform the target
-into the current robot frame and calculate `kappa = 2*y_body/(x_body^2+y_body^2)`.
-Command `omega=v*kappa`; reduce speed if needed to retain curvature within the
-angular limit. A target behind the robot triggers alignment before driving.
-The standard method is described in
-[Coulter, CMU-RI-TR-92-01](https://publications.ri.cmu.edu/implementation-of-the-pure-pursuit-path-tracking-algorithm).
-The instructor's detailed pure-pursuit lecture pages were not in the upload.
-
-Unwrap measured directed polar position about the circle center. Reversing
-subtracts progress; rotating in place does not count as a lap. Finish requires
-the requested laps, closure <=0.05 m, and heading error <=0.25 rad. It then
-remains stopped until shutdown. Phase unwrapping assumes consecutive samples
-advance less than pi radians about the center.
-
-Missing/invalid/stale odometry commands zero (receipt timeout 0.5 s); valid data
-resumes an unfinished run. Radial deviation >0.35 m latches a stop and requires
-inspection/relaunch. The controller does not implement obstacle avoidance.
-
-## Offline checks and remaining validation
-
-From the repository root:
-
-```bash
-python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p 'test_lab2_*.py' -v
-python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p 'test_odom_utils.py' -v
-python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p 'test_controller_logic.py' -v
-```
-
-Tests use ideal kinematics, ROS doubles and synthetic plotting fixtures. ROS
-build/launch, message transport, physical accuracy and stopping still require
-the actual Ubuntu/TurtleBot environment. No physical test results are claimed.
-
-
-## PID speed and alignment recovery
-
-Circle geometry is separate from motion control: `pursuit_geometry` supplies
-curvature and heading error; `CircleSpeedController` regulates measured odometry
-forward speed; `AlignmentRecovery` selects STOP/FOLLOW/ALIGN. The node composes
-`omega = v * curvature` after limiting forward speed, preserving curvature.
-The existing completion test and latched excessive radial error stop remain.
-
-The speed law is desired speed plus PID correction, with a curvature-feasible
-setpoint. Integral accumulation is blocked by velocity and acceleration limits.
-Normal forward commands ramp at `acceleration` m/s^2; safety stops, alignment,
-and tighter curvature limits override this ramp. PID state resets on stops,
-alignment, invalid odometry velocity, and nonpositive/long control intervals.
-Actual monotonic elapsed time supplies dt (nominal period on startup/reset).
-
-Startup launch arguments, also available as ROS parameters:
-
-| Argument | Default | Meaning |
+| Parameter | Default | Meaning |
 | --- | --- | --- |
-| `speed_kp` | 0.1 | Speed proportional gain |
-| `speed_ki` | 0.01 | Speed integral gain |
-| `speed_kd` | 0.005 | Speed derivative gain |
-| `acceleration` | 0.15 | Normal command ramp, m/s^2 |
-| `align_gain` | 2.0 | Turn-in-place proportional gain |
-| `align_enter` | 1.2 | Enter alignment at this absolute heading error, rad |
-| `align_exit` | 0.35 | Resume following below this heading error, rad |
+| target_speed | 0.12 | Goal speed along its circle, m/s; nonnegative |
+| robot_speed | 0.12 | Independent follower forward speed limit, 0 to 0.20 m/s |
+| radius | 0.75 | Goal circle radius, m |
+| lookahead | 0.30 | Initial goal chord lead, m; between 0 and 2*radius |
+| direction | 1 | +1 counterclockwise, -1 clockwise |
+| laps | 1 | Goal revolutions, excluding initial lead |
+| duration | 0.0 | Positive: stop goal after this many seconds; zero: use laps |
+| robot_namespace | /TTB10 | Robot topic prefix |
 
-Require `0 < align_exit < align_enter <= pi/2`. Alignment commands zero forward
-speed; hysteresis avoids repeated switching near a single threshold. Following
-restarts with a fresh speed PID and a ramp from zero. Gains are initial values,
-not validated hardware tuning. Lookahead remains fixed and needs speed-specific
-tuning; speed PID alone does not eliminate steering oscillations.
-
-Additional Float64 diagnostics under `/TTB10/lab2_circle/`: `desired_speed`,
-`measured_speed`, `pid_correction` (final limited command minus requested speed,
-including ramp/curvature effects, zero outside FOLLOW), and `recovery_state`
-(0 STOP, 1 FOLLOW, 2 ALIGN). Existing radial error and angular command topics
-help distinguish steering oscillation from speed surging.
+Change the two speeds independently while running:
 
 ```bash
-ros2 launch py_amr_ttb lab2_circle.launch.py speed:=0.12 speed_kp:=0.1 speed_ki:=0.01 speed_kd:=0.005
-ros2 run rqt_plot rqt_plot /TTB10/lab2_circle/desired_speed/data /TTB10/lab2_circle/measured_speed/data /TTB10/lab2_circle/radial_error/data /TTB10/lab2_circle/recovery_state/data
+ros2 param set /lab2_circle target_speed 0.08
+ros2 param set /lab2_circle robot_speed 0.16
 ```
+
+Set robot_speed to zero to stop robot commands while the goal continues. Set
+target_speed to zero to freeze the goal while the robot continues approaching.
+Geometry and finish-rule parameters require restarting. The old `speed`
+parameter is replaced by `robot_speed`.
+
+## Robot control and completion
+
+The follower uses wrapped bearing error to the current goal:
+
+```text
+w = clip(2*heading_error, -0.40, 0.40)
+v = min(robot_speed, 0.20, distance_to_goal) * max(0, cos(heading_error))
+```
+
+It moves and turns together for a goal ahead, slows near the goal, and turns
+in place for a goal behind. robot_speed is a requested maximum, not a forced
+constant measured speed. The robot can lag or cut corners; it is not required
+to complete the goal's number of revolutions.
+
+After the goal finishes its laps or duration, its position freezes. The robot
+continues pursuing this final position, then latches zero commands within
+0.05 m. A full lap ends at the initial lead point, not at the robot origin.
+A duration limit applies to goal motion, not to total robot catch-up time.
+
+Missing, invalid, or stale odometry (>0.5 s) stops robot commands. After the
+first valid odometry starts the target clock, that clock continues during
+odometry outages. Normal Ctrl+C shutdown sends zero velocity.
+
+## Diagnostics
+
+Scalar topics and paired JSON samples are under `/TTB10/lab2_circle/`.
+`target_speed` is actual goal speed (zero once it finishes), `robot_speed_limit`
+is the configured robot_speed, and `linear_command` / `measured_linear` show
+commanded / measured robot motion. `done` means the robot reached the final
+stopped goal. Radial error, robot laps and phase gap remain diagnostic only;
+none influences robot commands.
+
+```bash
+python3 -m py_amr_ttb.lab2.circle_plot --record lab_runs/circle/run01.csv --duration 90
+python3 -m py_amr_ttb.lab2.circle_plot --csv lab_runs/circle/run01.csv --output lab_runs/circle/run01.png
+```
+
+Tests use ROS doubles and ideal kinematics, not physical robot measurements.

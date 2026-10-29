@@ -102,6 +102,7 @@ CIRCLE_FIELDS = (
 )
 
 
+<<<<<<< HEAD
 def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
                             path, lookahead,
                             max_linear=.20, max_angular=.40):
@@ -131,29 +132,29 @@ def circle_tracking_command(x, y, yaw, robot_phase, target_phase, target_speed,
     phase_error = target_phase - robot_phase  # deliberately NOT wrapped
     v_ref = max(0.0, min(limit, target_speed + .5 * radius * phase_error))
     if v_ref == 0:
+=======
+def moving_goal_command(x, y, yaw, target_x, target_y, robot_speed,
+                        max_linear=.20, max_angular=.40):
+    """Pursue a position without any circle geometry or target-speed input.
+
+    robot_speed is the requested forward limit. Distance and heading reduce
+    it near the goal or during turns. No radial or phase correction is used.
+    """
+    values = (x, y, yaw, target_x, target_y, robot_speed, max_linear, max_angular)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('Follower inputs must be finite')
+    if robot_speed < 0 or min(max_linear, max_angular) <= 0:
+        raise ValueError('Invalid follower speed limits')
+    if robot_speed == 0:
         return 0.0, 0.0
-    radial_gain = 1.0 / lookahead
-    if rho < .05 * radius:
-        # The circle's center has no unique tangent. Escape outward in a fixed
-        # world direction; unlike chasing a fast target, this bearing is fixed.
-        desired_yaw = -direction * math.pi / 2
-        coefficient = 0.0
-    else:
-        ex, ey = rx / rho, ry / rho
-        a = radial_gain * (rho - radius)
-        qx, qy = -direction * ey - a * ex, direction * ex - a * ey
-        desired_yaw = math.atan2(qy, qx)
-        c, s = math.cos(yaw), math.sin(yaw)
-        # Analytic derivative of field heading along the actual robot motion:
-        # psi_dot = polar_dot + d*k_r*rho_dot/(1+(k_r*e_r)^2).
-        coefficient = ((ex * s - ey * c) / rho
-                       + direction * radial_gain * (ex * c + ey * s) / (1 + a*a))
-    heading_error = normalize_angle(desired_yaw - yaw)
-    feedback = max(-max_angular, min(max_angular, 1.2 * heading_error))
-    linear = v_ref * max(0.0, math.cos(heading_error))
-    if abs(coefficient) > 1e-9:
-        linear = min(linear, max(0.0, max_angular - abs(feedback)) / abs(coefficient))
-    angular = max(-max_angular, min(max_angular, coefficient * linear + feedback))
+    dx, dy = target_x - x, target_y - y
+    distance = math.hypot(dx, dy)
+    if distance < 1e-9:
+>>>>>>> 851e7a26962b7bde80ef9d729c340096ac67368a
+        return 0.0, 0.0
+    error = normalize_angle(math.atan2(dy, dx) - yaw)
+    linear = min(robot_speed, max_linear, distance) * max(0.0, math.cos(error))
+    angular = max(-max_angular, min(max_angular, 2.0 * error))
     return linear, angular
 
 

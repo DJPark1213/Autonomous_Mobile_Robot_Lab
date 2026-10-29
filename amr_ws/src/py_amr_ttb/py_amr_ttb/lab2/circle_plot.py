@@ -143,7 +143,7 @@ def plot_moving_target(args, rows):
             ('target_speed_mps', 'Target speed', '--'),
             (('robot_speed_limit_mps' if 'robot_speed_limit_mps' in rows[0]
               else 'robot_speed_mps'),
-             ('Fixed hardware speed bound' if 'robot_speed_limit_mps' in rows[0]
+             ('Robot follower speed limit' if 'robot_speed_limit_mps' in rows[0]
               else 'Legacy robot speed setting'), ':'),
             ('linear_command_mps', 'Robot command', '-'),
             ('measured_linear_mps', 'Robot odom speed', '-')):

@@ -16,6 +16,7 @@ class CircleConfig:
 
     CIRCLE_RADIUS = 0.75
     CIRCLE_TARGET_SPEED = 0.12  # Independent virtual target speed (m/s).
+    CIRCLE_ROBOT_SPEED = 0.12  # Independent follower speed limit (m/s).
     CIRCLE_DURATION = 0.0  # >0: fixed seconds; 0: finish after target laps.
     CIRCLE_LOOKAHEAD = 0.30
     CIRCLE_LAPS = 1

@@ -14,6 +14,7 @@ def generate_launch_description():
     settings = {
         'radius': C.CIRCLE_RADIUS,
         'target_speed': C.CIRCLE_TARGET_SPEED,
+        'robot_speed': C.CIRCLE_ROBOT_SPEED,
         'duration': C.CIRCLE_DURATION,
         'lookahead': C.CIRCLE_LOOKAHEAD,
         'laps': C.CIRCLE_LAPS,
