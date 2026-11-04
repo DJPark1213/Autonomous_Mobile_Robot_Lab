@@ -93,7 +93,9 @@ class Lab3Controller(Node):
                                   'behavior', 'obstacle_distance_m', 'wall_entry_goal_distance_m',
                                   'goal_normal_dot', 'goal_corridor_clear', 'planner',
                                   'field_x', 'field_y', 'repulsion_magnitude', 'tangent_weight',
-                                  'fallback_count', 'fallback_reason'))
+                                  'fallback_count', 'fallback_reason', 'phase', 'reason',
+                                  'measured_speed_m_s', 'target_heading_rad',
+                                  'available_travel_m', 'side_switch_count'))
             self.get_logger().info(f'CSV: {folder / name}')
         self.started_at = time.monotonic()
         self.timer = self.create_timer(self.cfg.control_period, self.tick)
@@ -137,6 +139,15 @@ class Lab3Controller(Node):
                 self.fatal = 'ODOM_JUMP_RESET_REQUIRED'
                 self.odom_received = None
                 return
+        if hasattr(self.nav, 'set_motion_feedback'):
+            twist = message.twist.twist
+            linear = math.hypot(twist.linear.x, twist.linear.y)
+            angular = twist.angular.z
+            if not math.isfinite(linear) or not math.isfinite(angular):
+                self.odom_received = None
+                self.sensor_problem('odom', 'nonfinite measured velocity')
+                return
+            self.nav.set_motion_feedback(linear, angular, now)
         self.pose = new_pose
         self.odom_received = now
         self.sensor_problems['odom'] = ''
@@ -221,7 +232,9 @@ class Lab3Controller(Node):
                                   self.cfg.planner,
                                   *(self.nav.diagnostics.get(k, math.nan) for k in
                                     ('field_x', 'field_y', 'repulsion_magnitude', 'tangent_weight',
-                                     'fallback_count', 'fallback_reason'))))
+                                     'fallback_count', 'fallback_reason', 'phase', 'reason',
+                                  'measured_speed_m_s', 'target_heading_rad',
+                                  'available_travel_m', 'side_switch_count'))))
 
     def tick(self):
         """One timer owns normal commands; any missing sensor commands zero."""

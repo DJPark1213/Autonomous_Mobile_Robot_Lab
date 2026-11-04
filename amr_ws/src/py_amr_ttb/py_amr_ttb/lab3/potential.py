@@ -1,87 +1,73 @@
-"""Lecture 6 potential guidance, a fixed tangent, and Lecture 5 wall recovery.
+"""Local full-footprint heading planner with latched brake/align/drive execution.
 
-The tangential component, near-goal fading and recovery logic are engineering
-additions, not a claim that this modified vector field is a potential gradient.
+The historic module/class name is retained for launch compatibility. This is
+NOT a pure artificial potential field and does not guarantee maze completion.
 """
-
 import math
-
 import numpy as np
-
-from .core import LectureNavigator, free_distances, guard_command
+from .core import LectureNavigator, free_distances, guard_command, wrap
 
 
 class PotentialNavigator(LectureNavigator):
-    """Follow a continuous field while retaining the baseline's stopping guard."""
-
     def __init__(self, config):
         super().__init__(config)
-        self.behavior = 'FIELD_GO_TO_GOAL'
-        self.fallback = None
-        self.fallback_count = 0
-        self.fallback_reason = ''
-        self.motion_anchor = None
-        self.motion_since = None
-        self.tangent_weight = 0.0
-        self.last_wall_direction = -1
+        self.phase = 'BRAKE'
+        self.target = None  # Persistent heading in the captured odometry frame.
+        self.feedback = None
+        self.previous_pose = None
+        self.still_since = None
+        self.scan_token = None
+        self.confirmations = 0
+        self.fallback_count = 0  # Existing CSV/simulation compatibility.
+        self.switch_count = 0
+
+    def set_motion_feedback(self, linear, angular, stamp):
+        self.feedback = (abs(float(linear)), abs(float(angular)), float(stamp))
 
     def pause(self, state='WAITING'):
-        """Pause both controllers and restart stall timing after data recovers."""
-        self.motion_anchor = self.motion_since = None
-        if self.fallback is not None:
-            self.fallback.pause(state)
+        self.phase = 'BRAKE'
+        self.still_since = None
+        self.confirmations = 0
         return super().pause(state)
 
-    def start_fallback(self, goal, normal, distance, now, reason):
-        """Hand the same pose, detour direction and speed to lecture wall following."""
-        if not self.wall_direction:
-            self.select_wall_direction(goal, normal, distance)
-        fallback = LectureNavigator(self.cfg)
-        fallback.wall_direction = self.wall_direction
-        fallback.behavior = fallback.wall_behavior()
-        fallback.entry_distance = distance
-        fallback.previous_v = self.previous_v
-        fallback.started = self.started
-        fallback.last_progress = now
-        fallback.best_distance = distance
-        self.fallback = fallback
-        self.fallback_count += 1
-        self.fallback_reason = reason
-
-    def step_fallback(self, pose, scan, now, dt, mode):
-        """Return to the field only after the lecture controller clears the obstacle."""
-        v, w = self.fallback.step(pose, scan, now, dt, mode)
-        self.previous_v = v
-        self.diagnostics.update(self.fallback.diagnostics)
-        self.diagnostics.update(fallback_count=self.fallback_count,
-                                fallback_reason=self.fallback_reason)
-        self.behavior = 'FALLBACK_' + self.fallback.behavior
-        self.state = 'FALLBACK_' + self.fallback.state
-        if self.fallback.done:
-            self.done = True
-            return self.pause('DONE')
-        if self.fallback.failure:
-            self.failure = self.fallback.failure
-            return self.pause(self.failure)
-        if self.fallback.behavior == 'GO_TO_GOAL':
-            self.fallback = None
-            self.wall_direction = 0
-            self.clear_ticks = 0
-            self.tangent_weight = 0.0
-            self.motion_anchor = np.asarray(pose[:2], dtype=float)
-            self.motion_since = now
-        return v, w
+    def output(self, v, w, state):
+        self.previous_v = float(v)
+        self.state = state
+        self.behavior = state
+        self.diagnostics.update(phase=self.phase, reason=state)
+        return float(v), float(w)
 
     def step(self, pose, scan, now, dt, mode='goal'):
-        """Return a bounded (v,w); recover from a stalled or degenerate field."""
         if self.done or self.failure:
             return self.pause('DONE' if self.done else self.failure)
-        if not scan.healthy:
+        if (not scan.healthy or not len(scan.points) or
+                not np.isfinite(scan.points).all()):
             return self.pause('SCAN_INVALID')
-        if not all(math.isfinite(v) for v in (*pose, now, dt)) or dt <= 0:
-            return self.pause('INVALID_INPUT')
-        if dt > self.cfg.sensor_timeout:
+        if not all(math.isfinite(z) for z in (*pose, now, dt)) or not 0 < dt <= self.cfg.sensor_timeout:
             return self.pause('TIMING_GAP')
+        # ROS supplies measured twist. Offline callers can use pose differences.
+        if self.feedback is not None:
+            speed, spin, stamp = self.feedback
+            if not all(math.isfinite(z) for z in self.feedback) or not 0 <= now-stamp <= self.cfg.sensor_timeout:
+                return self.pause('MOTION_FEEDBACK_STALE')
+        elif self.previous_pose is None:
+            speed, spin = math.inf, math.inf
+        else:
+            speed = math.dist(pose[:2], self.previous_pose[:2])/dt
+            spin = abs(wrap(pose[2]-self.previous_pose[2]))/dt
+        self.previous_pose = tuple(pose)
+        fresh_scan = scan is not self.scan_token
+        self.scan_token = scan
+        if speed < .012 and spin < .035:
+            if self.still_since is None:
+                self.still_since = now
+        else:
+            self.still_since = None
+        radius = self.cfg.radius + max(self.cfg.corridor_padding, self.cfg.sweep_padding)
+        nearest = float(np.linalg.norm(scan.points, axis=1).min())
+        self.diagnostics = {'obstacle_distance_m': nearest, 'measured_speed_m_s': speed}
+        if nearest <= radius:
+            return self.pause('FOOTPRINT_BLOCKED')
         x, y, yaw = pose
         distance = math.hypot(self.cfg.goal_x-x, self.cfg.goal_y-y)
         if mode == 'goal' and distance <= self.cfg.goal_tolerance:
@@ -89,103 +75,82 @@ class PotentialNavigator(LectureNavigator):
             return self.pause('DONE')
         if self.started is None:
             self.started = self.last_progress = now
-        if mode == 'goal':
-            if distance < self.best_distance - .03:
-                self.best_distance = distance
-                self.last_progress = now
-            if now-self.last_progress > self.cfg.progress_timeout:
-                self.failure = 'NO_PROGRESS'
-            if now-self.started > self.cfg.max_runtime:
-                self.failure = 'TIME_LIMIT'
-            if self.failure:
-                return self.pause(self.failure)
-        lengths = np.linalg.norm(scan.points, axis=1)
-        obstacle_distance = float(lengths.min())
-        if obstacle_distance <= self.cfg.radius:
-            return self.pause('TOO_CLOSE')
-        if self.fallback is not None:
-            return self.step_fallback(pose, scan, now, dt, mode)
-
-        c, s = math.cos(yaw), math.sin(yaw)
-        dx, dy = self.cfg.goal_x-x, self.cfg.goal_y-y
-        goal = np.array([c*dx+s*dy, -s*dx+c*dy]) if mode == 'goal' else np.array([1., 0.])
-        goal_norm = float(np.linalg.norm(goal))
-        goal_unit = goal / max(goal_norm, 1e-9)
-        normal = -scan.points[np.argmin(lengths)] / obstacle_distance
-        goal_heading = math.atan2(goal[1], goal[0])
-        check_length = distance if mode == 'goal' else self.cfg.lookahead
-        goal_free = free_distances(scan.points, [goal_heading], self.cfg.radius+.03,
-                                   cap=max(4., check_length+.1))[0]
-        corridor_clear = goal_free >= check_length
-
-        # rho is free distance beyond the SAME inflated footprint as the baseline.
-        rho = max(.01, obstacle_distance-self.cfg.radius)
-        rho0 = self.cfg.field_influence
-        activation = max(0., 1-rho/rho0)
-        if activation > 0 and not corridor_clear and not self.wall_direction:
-            self.select_wall_direction(goal, normal, distance)
-            self.last_wall_direction = self.wall_direction
-        if self.wall_direction:
-            progress = mode != 'goal' or distance < self.entry_distance-self.cfg.leave_progress
-            may_leave = corridor_clear and progress
-            self.clear_ticks = self.clear_ticks+1 if may_leave else 0
-            if self.clear_ticks >= 3:
-                self.wall_direction = 0
-                self.clear_ticks = 0
-
-        attraction = min(1., goal_norm) * goal_unit
-        magnitude = (self.cfg.repulsion_gain*(1/rho-1/rho0)/rho**2
-                     if rho < rho0 else 0.)
-        magnitude = min(2.5, max(0., magnitude))
-        # Fade repulsion near a reachable goal to avoid the near-obstacle goal trap.
-        if mode == 'goal' and corridor_clear:
-            magnitude *= min(1., distance/self.cfg.field_goal_fade)**2
-        repulsion = magnitude*normal
-        clockwise = np.array([normal[1], -normal[0]])
-        sign = self.wall_direction or self.last_wall_direction
-        tangent = clockwise if sign == -1 else -clockwise
-        requested_weight = self.cfg.tangent_gain*activation if self.wall_direction else 0.
-        self.tangent_weight += min(1., dt/.15)*(requested_weight-self.tangent_weight)
-        field = attraction + repulsion + self.tangent_weight*tangent
-
-        if self.motion_anchor is None:
-            self.motion_anchor = np.array([x, y])
-            self.motion_since = now
-        if np.linalg.norm(np.array([x, y])-self.motion_anchor) >= .05:
-            self.motion_anchor = np.array([x, y])
-            self.motion_since = now
-        stalled = not corridor_clear and now-self.motion_since >= self.cfg.field_stall_timeout
-        cycling = not corridor_clear and now-self.last_progress >= 4*self.cfg.field_stall_timeout
-        low_field = float(np.linalg.norm(field)) < .05
-        self.diagnostics = {
-            'obstacle_distance_m': obstacle_distance,
-            'wall_entry_goal_distance_m': self.entry_distance,
-            'goal_normal_dot': float(np.dot(normal, goal)),
-            'goal_corridor_clear': corridor_clear,
-            'field_x': float(field[0]), 'field_y': float(field[1]),
-            'repulsion_magnitude': magnitude, 'tangent_weight': self.tangent_weight,
-            'fallback_count': self.fallback_count, 'fallback_reason': self.fallback_reason,
-        }
-        if low_field or stalled or cycling:
-            self.start_fallback(goal, normal, distance, now,
-                                'LOW_FIELD' if low_field else 'NO_MOTION' if stalled else 'NO_GOAL_PROGRESS')
-            return self.step_fallback(pose, scan, now, dt, mode)
-
-        heading = math.atan2(field[1], field[0])
-        w = float(np.clip(self.cfg.angular_gain*heading,
-                          -self.cfg.max_angular, self.cfg.max_angular))
-        speed = self.cfg.max_linear
-        if mode == 'goal':
-            speed = min(speed, self.cfg.linear_gain*distance)
-        # Continuous motion through moderate heading errors, with no 0.55-rad cutoff.
-        v = speed*max(0., math.cos(heading))
-        forward_free = free_distances(scan.points, [0.], self.cfg.radius+.03)[0]
-        travel = max(0., forward_free-.02)
-        a, latency = self.cfg.braking_deceleration, self.cfg.sensor_timeout
-        stopping_limit = math.sqrt((a*latency)**2+2*a*travel)-a*latency
-        v = min(v, stopping_limit, self.previous_v+self.cfg.acceleration*dt)
-        v, w = guard_command(v, w, scan, self.cfg, self.previous_v)
-        self.previous_v = v
-        self.behavior = 'FIELD_BYPASS' if self.wall_direction else 'FIELD_GO_TO_GOAL'
-        self.state = 'SAFETY_STOP' if v == 0 and w == 0 else self.behavior
-        return v, w
+        if distance < self.best_distance-self.cfg.leave_progress:
+            self.best_distance, self.last_progress = distance, now
+        if mode == 'goal' and now-self.last_progress > self.cfg.progress_timeout:
+            self.failure = 'NO_PROGRESS'
+        if now-self.started > self.cfg.max_runtime:
+            self.failure = 'TIME_LIMIT'
+        if self.failure:
+            return self.pause(self.failure)
+        goal_heading = wrap(math.atan2(self.cfg.goal_y-y, self.cfg.goal_x-x)-yaw) if mode == 'goal' else 0.
+        # One geometry model serves both selection and execution. Include exact
+        # goal and remembered heading, so the grid cannot introduce a left bias.
+        old = wrap(self.target-yaw) if self.target is not None else 0.
+        headings = np.r_[np.linspace(-math.pi, math.pi, 181, endpoint=False), goal_heading, old, 0.]
+        rooms = free_distances(scan.points, headings, radius)
+        horizon = min(self.cfg.lookahead, max(.12, distance))
+        usable = rooms >= min(.12, distance)
+        score = (1.2*np.cos(headings-goal_heading) + .25*np.cos(headings)
+                 + .35*np.minimum(rooms/horizon, 1.))
+        score[~usable] = -math.inf
+        best = int(np.argmax(score))
+        if not np.isfinite(score[best]):
+            return self.pause('NO_LOCAL_ROUTE')
+        # Preserve a good direction; change only for a material improvement or
+        # when the committed corridor is no longer usable. Never force left.
+        old_index = len(headings)-2
+        if self.target is not None and usable[old_index]:
+            if self.phase == 'ALIGN' or score[best] < score[old_index]+.12:
+                best = old_index
+        chosen = float(headings[best])
+        if self.target is not None and abs(wrap(chosen-old)) > .3:
+            self.switch_count += 1
+        self.target = wrap(yaw+chosen)
+        self.diagnostics.update(target_heading_rad=chosen, available_travel_m=float(rooms[best]),
+                                side_switch_count=self.switch_count)
+        if self.phase == 'BRAKE':
+            if self.still_since is not None and now-self.still_since >= .25:
+                self.phase = 'ALIGN'
+                self.confirmations = 0
+            return self.output(0., 0., 'BRAKE_SETTLE')
+        if self.phase == 'ALIGN':
+            if abs(chosen) < .10:
+                if fresh_scan:
+                    self.confirmations += 1
+                if self.confirmations >= 3 and spin < .08:
+                    self.phase = 'DRIVE'
+                return self.output(0., 0., 'ALIGN_CONFIRM')
+            self.confirmations = 0
+            w = np.clip(self.cfg.angular_gain*chosen, -self.cfg.max_angular, self.cfg.max_angular)
+            return self.output(0., w, 'ALIGN_TURN')
+        if abs(chosen) > .40:
+            self.phase = 'BRAKE'
+            self.still_since = None
+            return self.output(0., 0., 'BRAKE_FOR_TURN')
+        w = float(np.clip(self.cfg.angular_gain*chosen, -self.cfg.max_angular, self.cfg.max_angular))
+        desired = min(self.cfg.max_linear, self.cfg.linear_gain*distance) if mode == 'goal' else self.cfg.max_linear
+        # Keep tight obstacle negotiation below the straight-line speed limit.
+        # A fast straight section must not dictate corner entry speed.
+        if rooms[-3] < min(distance, self.cfg.lookahead) or abs(chosen) > .15:
+            desired = min(desired, .10)
+        # Reserve translation for receipt latency and finite braking. The
+        # 2 cm reserve is additional free travel, not a smaller body radius.
+        forward = float(free_distances(scan.points, [0.], radius)[0])
+        travel = max(0., forward-.02)
+        a = self.cfg.braking_deceleration
+        latency = self.cfg.sensor_timeout + .18
+        limit = math.sqrt((a*latency)**2 + 2*a*travel)-a*latency
+        v = min(desired*max(0., math.cos(chosen)), limit,
+                self.previous_v+self.cfg.acceleration*dt)
+        # Reduce speed BEFORE clipping to a stop. Check the currently measured
+        # residual speed too; a previous zero command is not proof of rest.
+        for fraction in (1., .75, .5, .25):
+            trial = v*fraction
+            gv, gw = guard_command(trial, w, scan, self.cfg, max(speed, self.previous_v))
+            if gv > .005:
+                return self.output(gv, gw, 'DRIVE')
+        self.phase = 'BRAKE'
+        self.still_since = None
+        self.target = None
+        return self.output(0., 0., 'BRAKE_PATH_BLOCKED')
