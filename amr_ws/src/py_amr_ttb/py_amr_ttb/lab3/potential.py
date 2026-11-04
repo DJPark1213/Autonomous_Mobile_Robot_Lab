@@ -1,9 +1,3 @@
-"""Lecture 6 potential guidance, a fixed tangent, and Lecture 5 wall recovery.
-
-The tangential component, near-goal fading and recovery logic are engineering
-additions, not a claim that this modified vector field is a potential gradient.
-"""
-
 import math
 
 import numpy as np
@@ -24,10 +18,14 @@ class PotentialNavigator(LectureNavigator):
         self.motion_since = None
         self.tangent_weight = 0.0
         self.last_wall_direction = -1
+        self.switch_ticks = 0
+        self.last_switch_time = -math.inf
+        self.switch_count = 0
 
     def pause(self, state='WAITING'):
         """Pause both controllers and restart stall timing after data recovers."""
         self.motion_anchor = self.motion_since = None
+        self.switch_ticks = 0
         if self.fallback is not None:
             self.fallback.pause(state)
         return super().pause(state)
@@ -114,7 +112,7 @@ class PotentialNavigator(LectureNavigator):
         normal = -scan.points[np.argmin(lengths)] / obstacle_distance
         goal_heading = math.atan2(goal[1], goal[0])
         check_length = distance if mode == 'goal' else self.cfg.lookahead
-        goal_free = free_distances(scan.points, [goal_heading], self.cfg.radius+.03,
+        goal_free = free_distances(scan.points, [goal_heading], self.cfg.radius+self.cfg.corridor_padding,
                                    cap=max(4., check_length+.1))[0]
         corridor_clear = goal_free >= check_length
 
@@ -147,6 +145,60 @@ class PotentialNavigator(LectureNavigator):
         requested_weight = self.cfg.tangent_gain*activation if self.wall_direction else 0.
         self.tangent_weight += min(1., dt/.15)*(requested_weight-self.tangent_weight)
         field = attraction + repulsion + self.tangent_weight*tangent
+        # Compare both resultant field directions using the full inflated body.
+        # Distances below are available translation, not centre-to-wall ranges.
+        if self.wall_direction and not corridor_clear:
+            other_field = attraction + repulsion - self.tangent_weight*tangent
+            headings = [math.atan2(field[1], field[0]),
+                        math.atan2(other_field[1], other_field[0])]
+            room = free_distances(
+                scan.points, headings,
+                self.cfg.radius + self.cfg.corridor_padding)
+            can_switch = (np.linalg.norm(other_field) > .05
+                          and room[0] < .10 and room[1] > .25)
+            self.switch_ticks = self.switch_ticks+1 if can_switch else 0
+            if self.switch_ticks >= 3 and now-self.last_switch_time > 2.0:
+                self.wall_direction *= -1
+                self.last_wall_direction = self.wall_direction
+                field = other_field
+                self.entry_distance = distance
+                self.clear_ticks = 0
+                self.switch_ticks = 0
+                self.last_switch_time = now
+                self.switch_count += 1
+                # Give the changed direction a fresh motion-stall interval.
+                # Keep the overall no-progress/time-limit watchdogs intact.
+                self.motion_anchor = np.array([x, y])
+                self.motion_since = now
+        else:
+            self.switch_ticks = 0
+        # At corners, check openings when the field cannot cover the lookahead.
+        # Select an open full-body heading instead of insisting on a tangent.
+        # This is a local check, not a global path or a curved-sweep guarantee.
+        # The unchanged guard_command below still checks the commanded arc.
+        opening_selected = False
+        if not corridor_clear:
+            field_heading = math.atan2(field[1], field[0])
+            field_room = free_distances(
+                scan.points, [field_heading],
+                self.cfg.radius + self.cfg.corridor_padding)[0]
+            if field_room < self.cfg.lookahead:
+                candidates = np.linspace(-math.pi, math.pi, 361)
+                rooms = free_distances(
+                    scan.points, candidates,
+                    self.cfg.radius + self.cfg.corridor_padding)
+                available = rooms >= .15
+                if np.any(available):
+                    score = np.cos(candidates-goal_heading) + .15*np.cos(candidates)
+                    score[~available] = -math.inf
+                    chosen = candidates[int(np.argmax(score))]
+                    field = np.array([math.cos(chosen), math.sin(chosen)])
+                    opening_selected = True
+        # A verified full-width straight corridor to the fixed goal takes
+        # priority over side-wall repulsion. Keep the final sweep guard.
+        if corridor_clear:
+            field = attraction
+
 
         if self.motion_anchor is None:
             self.motion_anchor = np.array([x, y])
@@ -165,8 +217,10 @@ class PotentialNavigator(LectureNavigator):
             'field_x': float(field[0]), 'field_y': float(field[1]),
             'repulsion_magnitude': magnitude, 'tangent_weight': self.tangent_weight,
             'fallback_count': self.fallback_count, 'fallback_reason': self.fallback_reason,
+            'side_switch_count': self.switch_count,
+            'opening_selected': opening_selected,
         }
-        if low_field or stalled or cycling:
+        if low_field or ((stalled or cycling) and not opening_selected):
             self.start_fallback(goal, normal, distance, now,
                                 'LOW_FIELD' if low_field else 'NO_MOTION' if stalled else 'NO_GOAL_PROGRESS')
             return self.step_fallback(pose, scan, now, dt, mode)
@@ -179,7 +233,7 @@ class PotentialNavigator(LectureNavigator):
             speed = min(speed, self.cfg.linear_gain*distance)
         # Continuous motion through moderate heading errors, with no 0.55-rad cutoff.
         v = speed*max(0., math.cos(heading))
-        forward_free = free_distances(scan.points, [0.], self.cfg.radius+.03)[0]
+        forward_free = free_distances(scan.points, [0.], self.cfg.radius+self.cfg.corridor_padding)[0]
         travel = max(0., forward_free-.02)
         a, latency = self.cfg.braking_deceleration, self.cfg.sensor_timeout
         stopping_limit = math.sqrt((a*latency)**2+2*a*travel)-a*latency
@@ -187,5 +241,6 @@ class PotentialNavigator(LectureNavigator):
         v, w = guard_command(v, w, scan, self.cfg, self.previous_v)
         self.previous_v = v
         self.behavior = 'FIELD_BYPASS' if self.wall_direction else 'FIELD_GO_TO_GOAL'
-        self.state = 'SAFETY_STOP' if v == 0 and w == 0 else self.behavior
+        self.state = ('SAFETY_STOP' if v == 0 and w == 0 else
+                      'TURN_IN_PLACE' if v == 0 else self.behavior)
         return v, w
