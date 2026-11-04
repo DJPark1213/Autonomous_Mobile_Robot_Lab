@@ -1,11 +1,3 @@
-"""Shared scan/safety utilities and the Lecture 5 comparison controller.
-
-Coordinates: x forward, y left, yaw counterclockwise. Distances are metres.
-LectureNavigator follows AMR Lecture 5 pp.45-50: GTG/AO and wall following.
-The default continuous controller is selected in navigation.py.
-Lecture 3 p.42 supplies the proportional heading/distance control structure.
-"""
-
 from dataclasses import dataclass
 import math
 from typing import ClassVar
@@ -31,9 +23,11 @@ class Config:
     max_linear: float = 0.18
     max_angular: float = 0.7
     robot_radius: float = 0.17
-    safety_margin: float = 0.08
+    safety_margin: float = 0.04
+    corridor_padding: float = 0.002
+    sweep_padding: float = 0.005
     lookahead: float = 0.55
-    wall_distance: float = 0.40
+    wall_distance: float = 0.25
     wall_gain: float = 4.0
     wall_hysteresis: float = 0.025
     leave_progress: float = 0.03
@@ -81,7 +75,7 @@ class Config:
             raise ValueError('follow_distance is too small for the footprint')
         if self.follow_max_range <= self.follow_distance:
             raise ValueError('follow_max_range must exceed follow_distance')
-        if self.wall_distance - self.wall_hysteresis <= self.radius + .06:
+        if self.wall_distance - self.wall_hysteresis <= self.radius + .01:
             raise ValueError('wall_distance must leave room beyond the inflated footprint')
 
     @property
@@ -175,18 +169,28 @@ def guard_command(v, w, scan, config, previous_v=0.0):
     points = scan.points
     if len(points) and np.min(np.linalg.norm(points, axis=1)) <= config.radius:
         return 0.0, 0.0
-    speed = max(v, previous_v)
-    horizon = config.sensor_timeout + speed / config.braking_deceleration
-    for t in np.linspace(0, horizon, 15):
-        if abs(w) < 1e-6:
-            x, y = speed * t, 0.0
-        else:
-            x = speed * math.sin(w * t) / w
-            y = speed * (1 - math.cos(w * t)) / w
-        if len(points) and np.any(np.hypot(points[:, 0] - x, points[:, 1] - y)
-                                 <= config.radius + .01):
-            return 0.0, 0.0
-    return float(v), float(w)
+    def sweep_clear(speed, turn):
+        horizon = config.sensor_timeout + speed / config.braking_deceleration
+        for t in np.linspace(0, horizon, 15):
+            if abs(turn) < 1e-6:
+                x, y = speed * t, 0.0
+            else:
+                x = speed * math.sin(turn * t) / turn
+                y = speed * (1 - math.cos(turn * t)) / turn
+            if len(points) and np.any(np.hypot(points[:, 0]-x, points[:, 1]-y)
+                                     <= config.radius + config.sweep_padding):
+                return False
+        return True
+
+    if sweep_clear(max(v, previous_v), w):
+        return float(v), float(w)
+    # First command a full stop if the preceding command was moving.
+    # Only on a subsequent stopped-command tick consider rotation alone.
+    # A circle does not change its footprint during rotation; actual body
+    # must be contained in robot_radius. No reverse/forward escape is assumed.
+    if previous_v <= 1e-6 and abs(w) > 1e-6:
+        return 0.0, float(w)
+    return 0.0, 0.0
 
 
 class LectureNavigator:
@@ -277,7 +281,7 @@ class LectureNavigator:
         clear_shot = float(np.dot(normal, goal)) > 0
         # A finite robot additionally needs a clear corridor all the way to goal.
         check_length = distance if mode == 'goal' else self.cfg.lookahead
-        direct = free_distances(scan.points, [goal_heading], self.cfg.radius + .03,
+        direct = free_distances(scan.points, [goal_heading], self.cfg.radius + self.cfg.corridor_padding,
                                 cap=max(4., check_length+.1))[0]
         corridor_clear = direct >= check_length
         self.diagnostics = {
@@ -319,7 +323,7 @@ class LectureNavigator:
         elif self.behavior == 'AVOID_OBSTACLE':
             # An enclosed robot must not keep spinning toward an impossible escape.
             escape_heading = math.atan2(normal[1], normal[0])
-            escape = free_distances(scan.points, [escape_heading], self.cfg.radius+.03)[0]
+            escape = free_distances(scan.points, [escape_heading], self.cfg.radius+self.cfg.corridor_padding)[0]
             if escape < .1:
                 return self.pause('BLOCKED')
             direction = normal
