@@ -1,63 +1,87 @@
 # ECE 4060 AMR workspace
 
-For Lab 2 assignments and remaining work, see the [repository work plan](../README.md#lab-2-work-plan) and [one-page Word plan](../docs/Lab_2_Team_Work_Plan.docx). Lab 2 nodes and logic live together in `src/py_amr_ttb/py_amr_ttb/lab2/`; Lab 1 task demos live in `demo/` beside it. The Lab 1 instructions follow below.
+This directory is the ROS workspace. The Python package is in
+`src/py_amr_ttb`, and its launch files are in `src/py_amr_ttb/launch`.
+Commands below assume this directory is your working directory.
 
-For current Lab 2 code, recording commands, and shared utility usage, see
-[src/py_amr_ttb/py_amr_ttb/lab2/README.md](src/py_amr_ttb/py_amr_ttb/lab2/README.md).
-The Word plan is historical. Go-to-goal completion is now DJ's responsibility.
+## Lab 3: learn and replay
 
-The combined controller now connects the existing IR/wandering code to the
-supplied joystick mode selection and cruise PID logic. It starts in STOP and
-publishes zero velocity until a mode is selected. Physical validation, bags,
-and plots remain pending.
+Lab 3 uses LiDAR and odometry to explore an unknown obstacle course, save its map
+and trajectory, and improve the next run. The current finish assumption is
+`(10, 0)` metres in the initial robot frame, with a default cruise limit of
+0.30 m/s. See the
+[Lab 3 module diagram, behavior, and tuning guide](src/py_amr_ttb/py_amr_ttb/lab3/README.md).
 
-## Controls
+```mermaid
+flowchart LR
+  S["LiDAR + odometry"] --> G["geometry.py + state.py<br/>Observed space and motion"]
+  G --> M["mapping.py<br/>Map and corrected pose"]
+  M --> P["planner.py<br/>Target and recovery"]
+  R["memory.py<br/>First-run experience"] <--> P
+  R --> F["Saved course"]
+  M --> F
+  F --> E["replay.py<br/>Improved second-run route"]
+  E --> P
+  P --> C["motion.py<br/>Steering and stopping checks"]
+  G -->|fresh sensor data| C
+  C --> V["node.py publishes cmd_vel"]
+```
 
-- L1 selects WANDER and resets its drive/turn state.
-- L2 selects CRUISE, initially at 0.3 m/s. Subsequent entries retain the last target.
-- In CRUISE: Square = 0.1, Triangle = 0.2, Circle = 0.4, X = 0.0 m/s.
-- Holding R1 temporarily selects teleoperation; releasing it restores the
-  selected mode. Mode and speed button selections are ignored while R1 is held.
+`node.py` runs the control timer; `worker.py` owns mapping and planning in a
+separate process. Both use `Lab3Config`, and pose handling reuses `odom_utils.py`.
+See the [full module diagram](../README.md#lab-3-module-diagram) for process
+boundaries, timing, and the connections to configuration and logging.
 
-Joystick logic lives directly in `lab_one_controller.py`. The existing
-`IrSensorState` and `WanderBehavior` handle obstacle detection and wandering.
-`PidSpeedController` owns cruise calculation/history; it implements the pasted
-equation `target + Kp*error + Ki*integral + Kd*derivative`, including integral
-limits and conditional anti-windup. This is not the handout's incremental
-output equation; confirm the required form before final acceptance.
-
-The timer is the sole normal command publisher; shutdown also sends a zero
-command. Missing/stale IR stops wandering, missing/stale odometry stops cruise,
-and missing/stale or non-finite joystick axes stop an R1 override. X in cruise
-clears PID memory and commands zero even without odometry. Clock jumps or long
-timer gaps reset PID timing. Autonomous modes use their sensor timeouts and
-do not require a continuous joystick stream; a stale held R1 remains stopped
-until a fresh release message arrives.
-
-`lab_config.py` holds topics, axes, scales, timing, PID limits, and the existing
-IR calibration. Threshold 35 and front sensor indices 1–4 are retained.
-
-## Build and run on Ubuntu
+Build and start the first run:
 
 ```bash
-cd ~/amr_ws
 source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install --packages-select py_amr_ttb
 source install/setup.bash
-ros2 launch py_amr_ttb py_lab_one_controller.launch.py
+ros2 launch py_amr_ttb lab3_go_to_goal.launch.py robot_namespace:=/TTB10
 ```
 
-This launch is active, not an idle template. Start with wheels raised and run
-only one motion controller: do not run `lab_one_joystick` or `ttb_turn` alongside
-the combined node. Verify ROS topic types/QoS and stop/override behavior before
-floor trials. ROS 2 and the dependencies in `package.xml` must be installed.
+This starts moving once valid sensors and a plan arrive. Run one velocity
+controller at a time. Both Lab 3 launches accept `robot_namespace`, `base_frame`
+(default `base_link`), and `run_file` (default `~/amr_lab3_runs/course.npz`).
 
-## Offline checks
+After a completed first run, stop its process, return the robot near the original
+position and heading, and start replay from a sourced terminal:
 
 ```bash
-python3 -m unittest discover -s src/py_amr_ttb/test -p test_controller_logic.py -v
+ros2 launch py_amr_ttb lab3_replay.launch.py robot_namespace:=/TTB10
 ```
 
-These tests use ROS interface doubles and the real behavior modules. They do
-not validate discovery, QoS, message transport, or physical robot behavior.
-Run the ROS package checks and robot trials separately on Ubuntu.
+Replay waits for a confident scan alignment, uses the saved course, and checks
+the current scan before commanding motion. It saves results to
+`course.replay.npz`, preserving `course.npz`.
+
+Stop and queue a save from another sourced terminal:
+
+```bash
+ros2 service call /lab3_controller/stop std_srvs/srv/Trigger '{}'
+```
+
+Settings live in `Lab3Config` in
+[`lab_config.py`](src/py_amr_ttb/py_amr_ttb/lab_config.py). They can be overridden
+with ROS startup parameters when running `lab3_controller` directly; the detailed
+guide has an example. Pose conversion reuses
+[`odom_utils.py`](src/py_amr_ttb/py_amr_ttb/odom_utils.py).
+
+Offline checks from this workspace directory, with Python 3.10+ and NumPy:
+
+```bash
+python3 -m unittest discover -s src/py_amr_ttb/test -p test_lab3.py -v
+PYTHONPATH=src/py_amr_ttb python3 -m py_amr_ttb.lab3.simulate \
+  --scenario pocket --two-runs --output ../output/lab3-pocket
+```
+
+All 28 Lab 3 tests passed locally. ROS transport, TF/QoS, physical braking,
+LiDAR timing, and actual course performance still need robot validation.
+
+## Earlier labs
+
+- [Lab 2 goals and shape tracking](src/py_amr_ttb/py_amr_ttb/lab2/README.md)
+- [Lab 1 task demos](src/py_amr_ttb/py_amr_ttb/demo/README.md)
+- [Historical work plans and controller notes](../docs/LABS1_2_REFERENCE.md)

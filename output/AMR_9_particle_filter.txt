@@ -1,0 +1,852 @@
+PAGE 1
+AMR #9Nicola Bezzo, UVA
+PAGE 2
+LAST TIMEKalman FilterOccupancy Grid Mapping
+TODAY: LOCALIZATIONOdometry ModelingSensor RegistrationParticle FilterSLAM Intro
+PAGE 3
+ØRecursive algorithm that uses a series of noisy measurements observed over time and produces estimates of system states that tend to be more precise than those based on a single measurement. 
+µσ2
+likelihood
+state
+measurements
+prior
+UPDATE
+posterior
+PREDICT
+Kalman Filter 1D
+u
+PAGE 4
+wall
+space
+PAGE 5
+Occupancy Grid Mapping•Log-odd update
+Occupancy Grid Mapping
+• Log-odd update
+Prior MapMeasurement 
+Model
+Posterior Map
+Log-odd-meas
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+Posterior MapMeasurement ModelPrior Map
+Occupancy Grid Mapping
+• Log-odd update
+Prior MapMeasurement 
+Model
+Posterior Map
+Log-odd-meas
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+•Two possible measurements
+Occupancy Grid Mapping
+• Measurement model in log-odd form 
+log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 : = log 𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 : = log 𝑝 𝑧 = 0|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+• Two possible measurement: 
+Case I : cells with z=1
+Case II : cells with z=0
+(Trivial Case : cells not measured)
+Occupancy Grid Mapping
+• Measurement model in log-odd form 
+log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 : = log 𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 : = log 𝑝 𝑧 = 0|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+• Two possible measurement: 
+Case I : cells with z=1
+Case II : cells with z=0
+(Trivial Case : cells not measured)
+Case 1: cells with z=1
+Case 2: cells with z=0
+5
+
+PAGE 6
+Example•Constant Measurement Model
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+•Initial Map
+log odd_occ := 0.9log odd_free := 0.7 log odd_occ+ = log odd_meas UPDATE RULE:
+log odd = 0    for all (x,y)
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+Occupancy Grid Mapping
+t0
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+measurement
+-.7-.7-.7-.7-.7
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+t1
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+•Update•Case 1: cells with z=1log odd ß 0 + log odd_occ •Case 2: cells with z=0log odd ß 0 - log odd_free 6
+00000000000000000 000000000
+-.7-.7-.7-.7-.7.9
+00000000000000000 000000000
+measurement
+-.7-.7-.7 -.7-.7
+00000000000000000000000000000000
+
+PAGE 7
+Example•Constant Measurement Model
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+•Initial Map
+log odd_occ := 0.9log odd_free := 0.7 log odd_occ+ = log odd_meas UPDATE RULE:
+log odd = 0    for all (x,y)
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+Occupancy Grid Mapping
+t0
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+measurement
+-.7-.7-.7-.7-.7
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+t1
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+Occupancy Grid Mapping
+t0
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+measurement
+-.7-.7-.7-.7-.7
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+t1
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+•Update•Case 1: cells with z=1log odd ß 0 + log odd_occ •Case 2: cells with z=0log odd ß 0 - log odd_free 
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+Occupancy Grid Mapping
+t1
+t2
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+.9 -.7-.7-.7
+-.7-.7 -.7
+measurement
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+0 0 0 0 0 0
+0 0
+0
+0 0 0 0 0 0
+.9 -.7-.7-1.4 -1.4
+.9 -.7-.7 -.7 0
+0
+-1.4
+0
+0
+0
+0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+Occupancy Grid Mapping
+t1
+t2
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+.9 -.7-.7-.7
+-.7-.7 -.7
+measurement
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+0 0 0 0 0 0
+0 0
+0
+0 0 0 0 0 0
+.9 -.7-.7-1.4 -1.4
+.9 -.7-.7 -.7 0
+0
+-1.4
+0
+0
+0
+0 0
+belief becomes higher!7
+00000000000000000 000000000
+-.7-.7-.7-.7-.7.9
+000000000 00000 000000000
+measurement
+-.7-.7-.7 -.7-.7
+000000000 0000 000000000-1.4-.7-.7.9
+ -1.4-1.4.9 -.7-.7-.7
+PAGE 8
+Range measurements on GridHandling Range Measurement on Grid
+The Map
+Global frame
+The Robot
+𝑋ଶ
+𝑋ଵ
+𝑋ଶ
+𝑋ଵ
+Body frame
+𝑑
+need to transform the sensor datameasured in the body frame into the global map frame 8
+X1
+X2
+ d
+PAGE 9
+Range measurements on GridHandling Range Measurement on Grid
+The Map
+Global frame
+𝑋ଶ
+𝑋ଵ (𝑥ଵ, 𝑥ଶ, 𝜃)Known state: 
+𝜃
+The Robot
+𝑋ଶ
+𝑋ଵ
+Body frame
+𝑑
+9
+X1
+X2
+ d
+Handling Range Measurement on Grid
+The Map
+Global frame
+𝑋ଶ
+𝑋ଵ (𝑥ଵ, 𝑥ଶ, 𝜃)Known state: 
+𝜃
+The Robot
+𝑋ଶ
+𝑋ଵ
+Body frame
+𝑑
+PAGE 10
+Range measurements on GridHandling Range Measurement on Grid
+The Map
+Global frame
+𝑋ଶ
+𝑋ଵ (𝑥ଵ, 𝑥ଶ, 𝜃)Known state: 
+𝜃
+The Robot
+𝑋ଶ
+𝑋ଵ
+Body frame
+𝑑
+Handling Range Measurement on Grid
+The Map
+Global frame
+𝑋ଶ
+𝑋ଵ
+(𝑥ଵ,௢௖௖, 𝑥ଶ,௢௖௖)
+𝑥ଵ,௢௖௖
+𝑥ଶ,௢௖௖
+= cos 𝜃 sin 𝜃
+− sin 𝜃 cos 𝜃
+𝑑
+0 + 𝑥ଵ
+𝑥ଶ
+Known state: (𝑥ଵ, 𝑥ଶ, 𝜃)
+Distance measurement:   𝑑
+𝑑
+𝜃
+10
+Handling Range Measurement on Grid
+The Map
+Global frame
+𝑋ଶ
+𝑋ଵ (𝑥ଵ, 𝑥ଶ, 𝜃)Known state: 
+𝜃
+The Robot
+𝑋ଶ
+𝑋ଵ
+Body frame
+𝑑
+d
+PAGE 11
+Range measurements on GridHandling Range Measurement on Grid
+The (Continuous) Map
+𝑋ଶ
+𝑋ଵ
+The Discretized Map
+𝐼ଶ
+𝐼ଵ
+𝑟
+11
+PAGE 12
+Handling Range Measurement on Grid
+𝑋 𝐼
+𝑟 = 10
+1 2 3 4 …10 20 300
+0 < 𝑥 ≤ 10 𝑖 = 1
+• Example
+10 < 𝑥 ≤ 20 𝑖 = 2
+20 < 𝑥 ≤ 30 𝑖 = 3
+⋮⋮
+cm
+[cm]
+[cm] [index]
+•ExampleRange measurements on Grid
+Handling Range Measurement on Grid
+𝑋 𝐼
+𝑟
+1 2 3 4 …r 2r 3r0
+• Example
+𝑖 = 𝑐𝑒𝑖𝑙(𝑥/𝑟)
+Handling Range Measurement on Grid
+𝑋 𝐼
+𝑟 = 10
+1 2 3 4 …10 20 300
+0 < 𝑥 ≤ 10 𝑖 = 1
+• Example
+10 < 𝑥 ≤ 20 𝑖 = 2
+20 < 𝑥 ≤ 30 𝑖 = 3
+⋮⋮
+cm
+[cm]
+[cm] [index]
+Handling Range Measurement on Grid
+𝑋 𝐼
+𝑟
+1 2 3 4 …r 2r 3r0
+• Example
+𝑖 = 𝑐𝑒𝑖𝑙(𝑥/𝑟)
+12
+PAGE 13
+Range measurements on GridHandling Range Measurement on Grid
+𝑥ଵ,௢௖௖
+𝑥ଶ,௢௖௖
+= cos 𝜃 sin 𝜃
+− sin 𝜃 cos 𝜃
+𝑑
+0 + 𝑥ଵ
+𝑥ଶ
+The Map
+Global frame
+𝜃
+𝑑𝐼ଶ
+𝐼ଵ
+𝑖ଵ,௢௖௖
+𝑖ଶ,௢௖௖
+= 𝑐𝑒𝑖𝑙 1
+𝑟
+𝑥ଵ,௢௖௖
+𝑥ଶ,௢௖௖
+Known state: (𝑥ଵ, 𝑥ଶ, 𝜃)
+Distance measurement:   𝑑
+13
+Handling Range Measurement on Grid
+The (Continuous) Map
+𝑋ଶ
+𝑋ଵ
+The Discretized Map
+𝐼ଶ
+𝐼ଵ
+𝑟
+d
+Handling Range Measurement on Grid
+The Map
+Global frame
+𝑋ଶ
+𝑋ଵ (𝑥ଵ,𝑥ଶ,𝜃)Known state: 
+𝜃
+The Robot
+𝑋ଶ
+𝑋ଵ
+Body frame
+𝑑
+
+PAGE 14
+Range measurements on GridHandling Range Measurement on Grid
+The Map
+Global frame
+𝐼ଶ
+𝐼ଵ
+Known state: (𝑥ଵ, 𝑥ଶ, 𝜃)
+Distance measurement:   𝑑
+Occupied cell: (𝑥ଵ,௢௖௖, 𝑥ଶ,௢௖௖)
+*Bresenham's line algorithm
+14
+Handling Range Measurement on Grid
+The (Continuous) Map
+𝑋ଶ
+𝑋ଵ
+The Discretized Map
+𝐼ଶ
+𝐼ଵ
+𝑟
+Handling Range Measurement on Grid
+The Map
+Global frame
+𝑋ଶ
+𝑋ଵ (𝑥ଵ,𝑥ଶ,𝜃)Known state: 
+𝜃
+The Robot
+𝑋ଶ
+𝑋ଵ
+Body frame
+𝑑
+d
+Bresenham’s line algorithm
+
+PAGE 15
+Range measurements on Grid•Range sensors have usually multiple raysHandling Range Measurement on Grid
+The Map
+Global frame
+Known state: (𝑥ଵ, 𝑥ଶ, 𝜃)
+Distance measurement: 
+(𝑑ଵ, 𝑑ଶ, 𝑑ଷ, 𝑑ସ, 𝑑ହ)
+Directions of rays: 
+(𝛼ଵ, 𝛼ଶ, 𝛼ଷ, 𝛼ସ, 𝛼ହ)
+𝑥ଵ௞
+𝑥ଶ௞
+= 𝑑௞cos(𝜃 + 𝛼௞)
+−𝑑௞sin(𝜃 + 𝛼௞) + 𝑥ଵ
+𝑥ଶ
+𝑖ଵ௞
+𝑖ଶ௞
+= 𝑐𝑒𝑖𝑙 1
+𝑟
+𝑥ଵ௞
+𝑥ଶ௞
+For k-th occupied cell: 
+15
+Handling Range Measurement on Grid
+The (Continuous) Map
+𝑋ଶ
+𝑋ଵ
+The Discretized Map
+𝐼ଶ
+𝐼ଵ
+𝑟
+ d1d2d3d4
+d5 𝛼5𝛼4𝛼3
+𝛼2
+𝛼1
+PAGE 16
+
+PAGE 17
+Odometry Modeling•Encoder and local sources of information can be very precise 200000 pulse/m•Laser range finder 3-5 cm obstacle detection•RGB vision: 1-10cm•Gyroscope (turning)•Accelerometer integration provides poor accuracy
+
+PAGE 18
+Simple Approach•Integrate odometry information•Form a model of the vehicle (e.g. skid steering, differential drive, bicycle, etc.)•Map ticks of the wheel encoders to translation and rotation
+Simple	Approach
+• Integrate	odometry information
+• Form	a	model	of	the	vehicle
+• Skid	steer ,	in	this	case
+• Map	ticks	of	the	wheel	encoders	to	
+translation	and	rotation	of	the	body
+Simple	Approach
+• Integrate	
+odometry
+information
+• Form	a	model	of	the	vehicle
+• Skid	steer ,	in	this	case
+• Map	ticks	of	the	wheel	encoders	to	
+translation	and	rotation	of	the	body
+Simple	Approach
+• Integrate	
+odometry
+information
+• Form	a	model	of	the	vehicle
+• Skid	steer ,	in	this	case• Map	ticks	of	the	wheel	encoders	to	
+translation	and	rotation	of	the	body
+PAGE 19
+Tracking	Angular	Movement
+• Encoder	ticks	(e)	are	observed	
+at	the	inner	and	outer	radii
+• Known	width	between	wheels
+• Calculate	angular	odometry
+Inner	Radius
+Outer	Radius
+!" = $%" !& = $%&
+w = %& − %"
+$ = !& − !"
+)
+Tracking Angular movements (see quiz #1)•Encoder ticks (e) are observed at the inner and outer radii
+Tracking	Angular	Movement
+• Encoder	ticks	(e)	are	observed	
+at	the	inner	and	outer	radii
+• Known	width	between	wheels
+• Calculate	angular	odometry
+Inner	Radius
+Outer	Radius
+!" = $%" !& = $%&
+w = %& − %"
+$ = !& − !"
+)
+Tracking	Angular	Movement
+• Encoder	ticks	(e)	are	observed	
+at	the	inner	and	outer	radii
+• Known	width	between	wheels
+• Calculate	angular	odometry
+Inner	Radius
+Outer	Radius
+!" = $%" !& = $%&
+w = %& − %"
+$ = !& − !"
+)
+•Known width between wheels
+Tracking	Angular	Movement
+• Encoder	ticks	(e)	are	observed	
+at	the	inner	and	outer	radii
+• Known	width	between	wheels
+• Calculate	angular	odometry
+Inner	Radius
+Outer	Radius
+!" = $%" !& = $%&
+w = %& − %"
+$ = !& − !"
+)
+•Calculate angular odometry
+Tracking	Angular	Movement
+• Encoder	ticks	(e)	are	observed	
+at	the	inner	and	outer	radii
+• Known	width	between	wheels
+• Calculate	angular	odometry
+Inner	Radius
+Outer	Radius
+!" = $%" !& = $%&
+w = %& − %"
+$ = !& − !"
+)
+𝜃
+𝑟!
+𝑟"
+PAGE 20
+Tracking Angular movements•Translation requires knowledge of the angular movementTracking	Translational	Motion
+• Translation	requires	knowledge	
+of	the	angular	movement
+• Use	circular	sector	approximation,	
+valid	for	small	movements
+• Quiz:	Spinning	in	Place
+* = !& + !"
+2 sin $
+0 = !& + !"
+2 cos $
+$
+x
+y
+Tracking	Translational	Motion
+• Translation	requires	knowledge	
+of	the	angular	movement
+• Use	circular	sector	approximation,	
+valid	for	small	movements
+• Quiz:	Spinning	in	Place
+* = !& + !"
+2 sin $
+0 = !& + !"
+2 cos $
+$
+x
+y
+Tracking	Translational	Motion
+• Translation	requires	knowledge	
+of	the	angular	movement
+• Use	circular	sector	approximation,	
+valid	for	small	movements
+• Quiz:	Spinning	in	Place
+* = !& + !"
+2 sin $
+0 = !& + !"
+2 cos $
+$
+x
+y
+PAGE 21
+Aiding pure encoder odometry•Encoder measurements can be noisy (e.g., slippage)•Angular estimate feeds into translation à propagation error•solution: utilize more precise gyroscope  for angular change•Gyro is accurate for small Δt
+Aiding	Pure	Encoder	Odometry
+• Encoder	measurements	can	be	noisy
+• Angular	estimate	feeds	into	translation,	propagating	error
+• Solution: Utilize	more	precise	gyroscope	for	angular	change
+• Gyroscope	is	accurate	for	small	∆4
+$ = $̇ ∆4
+$̇
+$̇
+* = !& + !"
+2 sin $
+0 = !& + !"
+2 cos $
+Aiding	Pure	Encoder	Odometry
+• Encoder	measurements	can	be	noisy
+• Angular	estimate	feeds	into	translation,	propagating	error
+• Solution: Utilize	more	precise	gyroscope	for	angular	change
+• Gyroscope	is	accurate	for	small	∆4
+$ = $̇ ∆4
+$̇
+$̇
+* = !& + !"
+2 sin $
+0 = !& + !"
+2 cos $
+Aiding	Pure	Encoder	
+Odometry
+• Encoder	measurements	can	be	noisy
+• Angular	estimate	feeds	into	translation,	propagating	error
+• Solution:
+Utilize	more	precise	gyroscope	for	angular	change
+• Gyroscope	is	accurate	for	small	
+∆4
+$=$̇ ∆4
+$̇
+$̇
+*=
+!&
++!"
+2
+sin
+$
+0=
+!&
++!"
+2
+cos
+$
+Tracking	Translational	Motion
+• Translation	requires	knowledge	
+of	the	angular	movement
+• Use	circular	sector	approximation,	
+valid	for	small	movements
+• Quiz:	Spinning	in	Place
+* = !& + !"
+2 sin $
+0 = !& + !"
+2 cos $
+$
+x
+y
+Tracking	Translational	Motion
+• Translation	requires	knowledge	
+of	the	angular	movement
+• Use	circular	sector	approximation,	
+valid	for	small	movements
+• Quiz:	Spinning	in	Place
+* = !& + !"
+2 sin $
+0 = !& + !"
+2 cos $
+$
+x
+y
+PAGE 22
+Issues of this approach•Local frame of reference of the robot starting point•encoders suffer from slippage. missing counts•gyroscope integration suffers from drift•Solution: utilizing maps of the world can correct localization errors
+
+PAGE 23
+Map registration•Use depth sensor measurements•LIDAR: LIght Detection And Ranging•Continuous readings, r, at discrete angles,  θ
+LIDAR	Depth	Sensor
+• Depth	measurements	made	in	polar	coordinates
+• Continuous	readings,	r,	at	discrete	angles,	!
+PAGE 24
+Map registration•Use depth sensor measurements•LIDAR: LIght Detection And Ranging•Continuous readings, r, at discrete angles,  θ
+LIDAR	Depth	Sensor
+• Depth	measurements	made	in	polar	coordinates
+• Continuous	readings,	r,	at	discrete	angles,	!
+LIDAR	Depth	Sensor
+• Depth	measurements	made	in	polar	coordinates
+• Continuous	readings,	r,	at	discrete	angles,	!
+!
+r
+PAGE 25
+Map registration•Use depth sensor measurements•LIDAR: LIght Detection And Ranging•Continuous readings, r, at discrete angles,  θ
+LIDAR	Depth	Sensor
+• Depth	measurements	made	in	polar	coordinates
+• Continuous	readings,	r,	at	discrete	angles,	!
+LIDAR	Depth	Sensor
+• Depth	measurements	made	in	polar	coordinates
+• Continuous	readings,	r,	at	discrete	angles,	!
+!
+r
+LIDAR	Depth	Sensor
+• Depth	measurements	made	in	polar	coordinates
+• Continuous	readings,	r,	at	discrete	angles,	!
+!
+r
+PAGE 26
+Map representation•Discrete grid representation (using occupancy grid mapping)
+Map	Representation
+• Discrete	Grid	representing	2D	space	(see	Week	3)
+• White	cells	represent	the	presence	of	an	obstacle
+PAGE 27
+Localization Needs•Map
+Map	Measurements
+Map Measurements
+•Measurement
+Map	Measurements
+Map Measurements
+PAGE 28
+Map Registration•Find the pose that best explain the measurements
+Map	Registration
+• Find	robot	pose	that	best	explains	the	measurements
+PAGE 29
+Map Registration•Instead of searching the entire map: use and correlate odom measurements 
+Map	Registration
+• Find	robot	pose	that	best	explains	the	measurements
+PAGE 30
+Map Registration•Find the best pose
+Map	Registration
+Find	the	best	pose
+max
+:
+" # $% + ' cos $+ + '+ , $- + ' sin $+ + '+ 0 1(3, 4)
+6
+Map	Registration
+• Correlate	laser	obstacles	with	map	obstacles
+• Correlate	laser	free	space	with	map	free	space
+"# $% + 'cos $+ + '+ ,$- + 'sin $+ + '+
+0 1(3, 4)6
+•Issues: 1.pose uncertainties with a simple Gaussian may not be feasible2.computationally expensive and a lot of memory
+Number of laser hits
+Map	Registration
+Find	the	best	pose
+max: "# $% + 'cos $+ + '+ ,$- + 'sin $+ + '+ 0 1(3,4)
+6
+
+PAGE 31
+Particle Filter
+
+PAGE 32
+𝑝(𝑥|𝑧)∝𝑝𝑧𝑥𝑝(𝑥)
+𝑝𝑥#=+𝑝𝑥#𝑥𝑝(𝑥)
+Particle FilterMeasurement Update
+Motion Update
+posterior of state given measurementprobability of measurement given stateprior
+particlesimportance weightresampling
+•probability of x one time step later •new particle set
+convolution of the transition probability
+32
+PAGE 33
+Particle Filter•Non-parametric recursive Bayes filter•Posterior is represented by a set of weighted samples•Can model arbitrary distributions•Works well in low-dimensional spaces•4-step procedure•Sampling•Importance weighting•Resampling•move the robot/particles
+
+PAGE 34
+Particle Filter
+34
+PAGE 35
+SLAM•Simultaneous Localization and Mapping is the process by which a robot builds a map of the environment and, at the same time, uses this map to compute its location
+•Localization: inferring location given a map•Mapping: inferring a map given a location•SLAM: learning a map and locating the robot simultaneouslyCHICKEN-OR-EGG PROBLEMHard problem to solve
+PAGE 36
+Why is SLAM a hard problem?•SLAM: robot path and map are both unknown
+10 
+Why is SLAM a hard problem? 
+• In the real world, the mapping between 
+observations and landmarks is unknown 
+• Picking wrong data associations can have 
+catastrophic consequences 
+• Pose error correlates data associations 
+Robot pose 
+uncertainty 
+•In the real world, the mapping between observations and landmarks is unknown•picking wrong data associations can have catastrophic consequences•pose errors correlates data associations

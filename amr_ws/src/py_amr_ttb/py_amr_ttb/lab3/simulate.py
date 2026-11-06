@@ -1,137 +1,152 @@
-"""Reproducible ideal 2-D ray-cast tests, explicitly not robot measurements."""
+"""ROS-free regression simulator with ray-cast LiDAR and a separate robot plant."""
 
 import argparse
-import csv
+from collections import Counter
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
+import tempfile
+import time
 
 import numpy as np
 
-from .core import Config, process_scan, wrap
-from .navigation import make_navigator
+from py_amr_ttb.lab_config import Lab3Config
+from .geometry import process_scan, inverse_points
+from .motion import MotionController
+from .types import RobotState
+from .worker import NavigationEngine, Work
 
 
-SCENARIOS = {
-    'clear': [],
-    'center_box': [(.65, -.20, 1.0, .20)],
-    'left_box': [(.65, -.03, 1.0, .40)],
-    'right_box': [(.65, -.40, 1.0, .03)],
-    'wide_box': [(.65, -.40, 1.0, .40)],
-}
+def rectangle(x0, y0, x1, y1):
+    points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    return [(points[i], points[(i+1) % 4]) for i in range(4)]
 
 
-def raycast(pose, boxes, rays=360):
-    """Intersect rays against rectangles and enclosing room walls."""
+def course(name):
+    boundary = rectangle(-1., -2., 5., 2.)
+    if name == 'straight':
+        return boundary, (3., 0.)
+    if name == 'obstacle':
+        return boundary+rectangle(1., -.45, 1.35, .45), (3., 0.)
+    if name == 'pocket':
+        # A visible capped corridor ahead, with a way around its sides.
+        return boundary+[((.65, -.6), (2., -.6)), ((2., -.6), (2., .6)),
+                         ((2., .6), (.65, .6))], (3.4, 0.)
+    if name == 'corner':
+        return boundary+[((1.1, -2.), (1.1, .7)), ((1.1, .7), (2.3, .7))], (3.4, 0.)
+    raise ValueError(name)
+
+
+def raycast(walls, pose, count=360, maximum=6.):
+    angles = np.linspace(-math.pi, math.pi, count, endpoint=False)+pose[2]
+    directions = np.column_stack((np.cos(angles), np.sin(angles)))
+    segments = np.asarray(walls, dtype=float)
+    a, segment = segments[:, 0], segments[:, 1]-segments[:, 0]
+    offset = a-np.asarray(pose[:2])
+    cross = directions[:, 0, None]*segment[None, :, 1]-directions[:, 1, None]*segment[None, :, 0]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t = (offset[:, 0]*segment[:, 1]-offset[:, 1]*segment[:, 0])[None, :]/cross
+        u = (offset[None, :, 0]*directions[:, 1, None]-offset[None, :, 1]*directions[:, 0, None])/cross
+    valid = (abs(cross) > 1e-10) & (t >= .03) & (u >= 0) & (u <= 1)
+    distances = np.where(valid, t, np.inf).min(axis=1)
+    return np.where(distances <= maximum, distances, np.inf)
+
+
+def wall_distance(walls, position):
+    walls = np.asarray(walls)
+    start, delta = walls[:, 0], walls[:, 1]-walls[:, 0]
+    alpha = np.clip(np.sum((np.asarray(position)-start)*delta, axis=1)/np.sum(delta*delta, axis=1), 0, 1)
+    return float(np.linalg.norm(start+alpha[:, None]*delta-position, axis=1).min())
+
+
+def plant(pose, v, w, command, dt):
+    """Independent response: slower acceleration and finite braking, 5 ms substeps."""
     x, y, yaw = pose
-    angles = np.linspace(-math.pi, math.pi, rays, endpoint=False)
-    dx, dy = np.cos(angles + yaw), np.sin(angles + yaw)
-    dx = np.where(np.abs(dx) < 1e-12, 1e-12, dx)
-    dy = np.where(np.abs(dy) < 1e-12, 1e-12, dy)
-    result = np.full(rays, math.inf)
-    for xmin, ymin, xmax, ymax in [(-4, -4, 4, 4), *boxes]:
-        tx1, tx2 = (xmin - x) / dx, (xmax - x) / dx
-        ty1, ty2 = (ymin - y) / dy, (ymax - y) / dy
-        near = np.maximum(np.minimum(tx1, tx2), np.minimum(ty1, ty2))
-        far = np.minimum(np.maximum(tx1, tx2), np.maximum(ty1, ty2))
-        hit = np.where(near > 0, near, far)
-        hit = np.where((far >= near) & (far > 0), hit, math.inf)
-        result = np.minimum(result, hit)
-    return result, angles[0], 2 * math.pi / rays
+    for _ in range(10):
+        h = dt/10
+        av = .35 if abs(command.v) > abs(v) and command.v*v >= 0 else .60
+        aw = 1.50 if abs(command.w) > abs(w) and command.w*w >= 0 else 2.50
+        v += max(-av*h, min(av*h, command.v-v))
+        w += max(-aw*h, min(aw*h, command.w-w))
+        yaw += w*h
+        x += v*math.cos(yaw)*h
+        y += v*math.sin(yaw)*h
+    return (x, y, math.atan2(math.sin(yaw), math.cos(yaw))), v, w
 
 
-def clearance(pose, boxes):
-    """Exact robot-centre clearance to the rectangles, independent of lidar."""
-    x, y, _ = pose
-    values = [4 - abs(x), 4 - abs(y)]
-    for xmin, ymin, xmax, ymax in boxes:
-        values.append(math.hypot(max(xmin - x, 0, x - xmax),
-                                 max(ymin - y, 0, y - ymax)))
-    return min(values)
-
-
-def run_scenario(name, boxes, config=None, seconds=120.0, scan_noise=0.0,
-                 scan_period=.10, seed=42):
-    """Integrate the actual planner using ideal unicycle kinematics."""
-    config = config or Config()
-    control = make_navigator(config)
-    pose = np.zeros(3)
-    history = []
-    min_clearance = math.inf
-    dt = config.control_period
-    rng = np.random.default_rng(seed)
-    next_scan = 0.0
-    scan = None
-    for tick in range(int(seconds / dt)):
-        if scan is None or tick*dt >= next_scan-1e-9:
-            ranges, angle_min, increment = raycast(pose, boxes)
-            if scan_noise:
-                ranges += rng.normal(0, scan_noise, len(ranges))
-            scan = process_scan(ranges, angle_min, increment, .05, 12.)
-            next_scan += scan_period
-        v, w = control.step(pose, scan, tick * dt, dt)
-        history.append((tick * dt, *pose, v, w, control.state))
-        mid = pose[2] + w * dt / 2
-        pose[0] += v * math.cos(mid) * dt
-        pose[1] += v * math.sin(mid) * dt
-        pose[2] = wrap(pose[2] + w * dt)
-        min_clearance = min(min_clearance, clearance(pose, boxes))
-        if control.done or control.failure:
+def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
+    walls, goal = course(name)
+    config = config or Lab3Config(goal_x=goal[0], goal_y=goal[1], alignment_enabled=False)
+    engine = NavigationEngine(config)
+    motion = MotionController(config)
+    pose, v, w = start, 0., 0.
+    scan = plan = None
+    blocked = False
+    reasons, modes = Counter(), Counter()
+    samples, durations = [], []
+    minimum, peak = math.inf, 0.
+    done = False
+    for tick in range(int(seconds/config.control_period)):
+        now = tick*config.control_period
+        state = RobotState(pose, v, w, now, now)
+        if tick % 2 == 0:
+            scan = process_scan(raycast(walls, pose), -math.pi, 2*math.pi/360, .03, 6.,
+                                config, pose=pose, stamp=now, received=now, sequence=tick)
+        if tick % max(1, round(config.map_period/config.control_period)) == 0:
+            began = time.perf_counter()
+            plan = engine.step(Work(state, scan, now, blocked))
+            durations.append(time.perf_counter()-began)
+        target = plan.target if plan else None
+        if target is not None:
+            target = replace(target, point=tuple(inverse_points([target.point], plan.transform)[0]))
+        result = motion.step(state, scan, target, now, config.control_period,
+                             plan.diagnostics.get('speed_cap') if plan else None)
+        blocked = result.blocked
+        reasons[result.reason] += 1
+        modes[target.mode if target else 'NONE'] += 1
+        samples.append((now, *pose, v, w, result.v, result.w))
+        pose, v, w = plant(pose, v, w, result, config.control_period)
+        minimum = min(minimum, wall_distance(walls, pose[:2]))
+        peak = max(peak, abs(v))
+        if minimum < config.robot_radius:
+            raise AssertionError(f'Collision at {pose}, clearance={minimum:.3f}')
+        if plan and plan.status == 'DONE' and abs(v) < .005 and abs(w) < .01:
+            done = True
             break
-    return {
-        'scenario': name, 'kind': 'ideal_2d_simulation_not_robot_data',
-        'algorithm': config.planner,
-        'fallback_count': getattr(control, 'fallback_count', 0),
-        'scan_period_s': scan_period, 'scan_noise_std_m': scan_noise, 'seed': seed,
-        'reached': control.done, 'state': control.state,
-        'elapsed_s': history[-1][0],
-        'goal_error_m': math.hypot(pose[0] - config.goal_x, pose[1] - config.goal_y),
-        'minimum_center_clearance_m': min_clearance,
-        'minimum_body_clearance_m': min_clearance - config.robot_radius,
-        'path_length_m': sum(row[4] * dt for row in history),
-        'behavior_sequence': [row[6] for i, row in enumerate(history)
-                              if i == 0 or row[6] != history[i-1][6]],
-    }, history
+    return dict(scenario=name, completed=done, elapsed=now, distance_to_goal=math.dist(pose[:2], goal),
+                minimum_clearance=minimum, peak_speed=peak, reasons=dict(reasons), modes=dict(modes),
+                worker_ms_p95=float(np.percentile(durations, 95)*1000),
+                samples=samples, engine=engine)
 
 
 def main(args=None):
-    """Write simulated trajectories, metrics and a labelled figure."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', default='lab3_simulation')
-    parser.add_argument('--planner', choices=('potential', 'lecture'), default='potential')
-    opts = parser.parse_args(args)
-    output = Path(opts.output)
-    output.mkdir(parents=True, exist_ok=True)
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Circle, Rectangle
-    fig, axes = plt.subplots(1, len(SCENARIOS), figsize=(18, 4), constrained_layout=True)
-    metrics = []
-    for ax, (name, boxes) in zip(axes, SCENARIOS.items()):
-        metric, rows = run_scenario(name, boxes, Config(planner=opts.planner))
-        metrics.append(metric)
-        with (output / f'{name}.csv').open('w', newline='') as stream:
-            writer = csv.writer(stream)
-            writer.writerow(('time_s', 'x_m', 'y_m', 'yaw_rad', 'v_m_s', 'w_rad_s', 'state'))
-            writer.writerows(rows)
-        data = np.asarray([r[:6] for r in rows])
-        ax.plot(data[:, 1], data[:, 2], color='#167d9a', lw=2)
-        ax.add_patch(Circle((0, 0), .19, fill=False, color='#167d9a'))
-        for x1, y1, x2, y2 in boxes:
-            ax.add_patch(Rectangle((x1, y1), x2-x1, y2-y1, color='#ac794d'))
-        ax.scatter([1.5], [0], marker='*', color='#e37631', s=120)
-        ax.set(title=f'{name}\n{metric["state"]} | {metric["elapsed_s"]:.1f}s',
-               xlabel='x (m)', ylabel='y (m)', xlim=(-.3, 1.9), ylim=(-1.1, 1.1))
-        ax.set_aspect('equal')
-        ax.grid(alpha=.2)
-    fig.suptitle(f'Lab 3 | {opts.planner} | Ideal 2-D simulation, NOT robot data', fontsize=14)
-    fig.savefig(output / 'simulation.png', dpi=170)
-    plt.close(fig)
-    (output / 'metrics.json').write_text(json.dumps(metrics, indent=2) + '\n')
-    print(json.dumps(metrics, indent=2))
-    if not all(m['reached'] and m['minimum_body_clearance_m'] > 0 for m in metrics):
-        raise SystemExit('A navigation scenario failed')
+    parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner'), default='obstacle')
+    parser.add_argument('--seconds', type=float, default=90.)
+    parser.add_argument('--output', type=Path)
+    parser.add_argument('--two-runs', action='store_true')
+    options = parser.parse_args(args)
+    with tempfile.TemporaryDirectory() as directory:
+        _, goal = course(options.scenario)
+        cfg = Lab3Config(goal_x=goal[0], goal_y=goal[1], run_file=str(Path(directory)/'course.npz'),
+                         alignment_enabled=False)
+        first = simulate(options.scenario, cfg, options.seconds)
+        reports = [first]
+        if options.two_runs and first['completed']:
+            reports.append(simulate(options.scenario, replace(cfg, run_mode='replay'), options.seconds))
+        summary = [{key: value for key, value in report.items() if key not in ('samples', 'engine')}
+                   for report in reports]
+        print(json.dumps(summary, indent=2))
+        if options.output:
+            options.output.mkdir(parents=True, exist_ok=True)
+            (options.output/'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+            for index, report in enumerate(reports, 1):
+                np.savetxt(options.output/f'run{index}.csv', report['samples'], delimiter=',',
+                           header='time,x,y,yaw,measured_v,measured_w,command_v,command_w', comments='')
+                report['engine'].memory.save(options.output/f'run{index}.npz', report['engine'].mapper.grid)
+        if not all(report['completed'] for report in reports):
+            raise SystemExit(1)
 
 
 if __name__ == '__main__':

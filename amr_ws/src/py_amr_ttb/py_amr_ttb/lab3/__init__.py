@@ -1,1 +1,1 @@
-"""Lab 3 lidar navigation and optional target following."""
+"""Two-run course navigation; algorithms are independent of ROS transport."""

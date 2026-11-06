@@ -30,11 +30,11 @@ setup(
             glob('launch/*.launch.py'),
         ),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'numpy'],
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='BrodyBrody41@gmail.com',
-    description='ROS 2 controllers for AMR Labs 1 and 2.',
+    description='ROS 2 controllers for AMR Labs 1, 2 and 3.',
     license='TODO',
     extras_require={
         'test': ['pytest'],

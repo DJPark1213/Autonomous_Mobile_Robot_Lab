@@ -1,0 +1,4133 @@
+PAGE 1
+AMR #8Nicola Bezzo, UVA
+1
+PAGE 2
+TODAY:•Kalman Filter•Extended Kalman Filter •Unscented Kalman Filter
+Introduction to Mapping•Occupancy Grid•Log-odd update
+2
+PAGE 3
+Introduction to Kalman FilterKF is an optimal tracking algorithm for linear systems•Multiple measurements•Each measurement is noisy•What is the true state of the robot?
+state measurement-distance-velocity-color-temperature-…
+(hidden variable)-position-velocity-rotation-color-weight-temperature-…
+ 3
+PAGE 4
+Introduction to Kalman FilterVery similar to Monte Carlo Localization (MC)
+4
+KF MC•Estimate CONTINUOUS states •Estimate DISCRETE states•UNI-MODAL distribution•MULTI-MODAL distribution
+PARTICLE FILTER•Estimate CONTINUOUS states•MULTI-MODAL distributionHISTORY: Rudolf Emil Kálmán (Hungary)                 - Paper 1960                 - Aerospace vehicles (Apollo Program)                 - Cruise Missiles                 - Autonomous vehicles/ robotic applications
+
+PAGE 5
+TABLET NOTES
+5
+PAGE 6
+Linear Modeling•Discrete Linear dynamical system of motion
+•Simple state vector, x, with position and velocity
+•Description of Dynamics
+PROBLEM: NOISE !!!
+!!"#=#!!+%&!
+!!"#='	 )	*'*+
+,!=-!!
+#=1*+01
+!!"#=#!!+%&!+0 ,!=-!!+1
+6
+PAGE 7
+Bayesian Kalman Filter•Modeling motion and noise
+xt-1
+zt-1
+xt
+zt
+xt+1
+zt+1
+xt+2
+zt+2
+•Know xt-1•Know yt•Find xt
+y yyy
+7
+PAGE 8
+Bayesian Modeling•Prediction using state dynamics model
+Bayesian	modeling
+• Prediction	using	state	dynamics	model	
+• Inference	from	noisy	measurements	
+• Model	xt with	a	Gaussian	(mean	and	covariance)
+2.	Kalman Filter
+H @IJK @I
+H(LI|@I )
+H(@I ) = N(@I , PI )
+•Inference from noisy measurements
+Bayesian	modeling
+• Prediction	using	state	dynamics	model	
+• Inference	from	noisy	measurements	
+• Model	xt with	a	Gaussian	(mean	and	covariance)
+2.	Kalman Filter
+H @IJK @I
+H(LI|@I )
+H(@I ) = N(@I , PI )
+•Model xt with a Gaussian (mean and covariance)
+Bayesian	modeling
+• Prediction	using	state	dynamics	model	
+• Inference	from	noisy	measurements	
+• Model	xt with	a	Gaussian	(mean	and	covariance)
+2.	Kalman Filter
+H @IJK @I
+H(LI|@I )
+H(@I ) = N(@I , PI )
+•Apply linear dynamics
+Bayesian	filtering	
+• Apply	linear	dynamics
+• Add	noise	for	motion	and	observations
+• Introduce	Gaussian	model	of	xt
+2.	Kalman Filter
+H @IJK @I = QH @I
+H LI @I = RH @I
+H @IJK @I = QH @I + ST
+H LI @I = RH @I + SU
+H @IJK @I = QN(@I , PI ) + N(0, ΣT )
+H LI @I = RN(@I, PI ) + N(0, ΣU )
+y
+y
+8
+PAGE 9
+Bayesian Modeling•Add noise for motion and observations
+•Introduce Gaussian model to xt
+•Apply linear transformation to Gaussian distributions
+Bayesian	filtering	
+• Apply	linear	dynamics
+• Add	noise	for	motion	and	observations
+• Introduce	Gaussian	model	of	xt
+2.	Kalman Filter
+H @IJK @I = QH @I
+H LI @I = RH @I
+H @IJK @I = QH @I + ST
+H LI @I = RH @I + SU
+H @IJK @I = QN(@I , PI ) + N(0, ΣT )
+H LI @I = RN(@I, PI ) + N(0, ΣU )
+Bayesian	filtering	
+• Apply	linear	dynamics
+• Add	noise	for	motion	and	observations
+• Introduce	Gaussian	model	of	xt
+2.	Kalman Filter
+H @IJK @I = QH @I
+H LI @I = RH @I
+H @IJK @I = QH @I + ST
+H LI @I = RH @I + SU
+H @IJK @I = QN(@I , PI ) + N(0, ΣT )
+H LI @I = RN(@I, PI ) + N(0, ΣU )
+Bayesian	filtering	
+• Consolidate	expression	using	special	properties
+• Apply	linear	transform	to	Gaussian	distributions
+• Apply	summation
+2.	Kalman Filter
+H @IJK @I = QN(@I , PI ) + N(0, ΣT )
+H LI @I = RN(@I, PI ) + N(0, ΣU )
+H @IJK @I = N(Q@I , QPI QX ) + N(0, ΣT )
+H LI @I = N(R@I , RPI RX ) + N(0, ΣU )
+H @IJK @I = N(Q@I, QPI QX + ΣT )
+H LI @I = N(R@I , RPI RX + ΣU )
+Bayesian	filtering	
+• Consolidate	expression	using	special	properties
+• Apply	linear	transform	to	Gaussian	distributions
+• Apply	summation
+2.	Kalman Filter
+H @IJK @I = QN(@I , PI ) + N(0, ΣT )
+H LI @I = RN(@I, PI ) + N(0, ΣU )
+H @IJK @I = N(Q@I , QPI QX ) + N(0, ΣT )
+H LI @I = N(R@I , RPI RX ) + N(0, ΣU )
+H @IJK @I = N(Q@I, QPI QX + ΣT )
+H LI @I = N(R@I , RPI RX + ΣU )
+y
+y
+y
+y 9
+PAGE 10
+Bayesian Filtering•Bayes’ Rule
+Bayesian filtering 
+• Bayes’ Rule
+• Given from Kalman model:
+𝑝 𝛼 𝛽 = 𝑃 𝛽 𝛼 𝑃 𝛼
+𝑃(𝛽)
+𝑝 𝑧௧𝑥௧ = 𝒩(𝐶𝑥௧, Σ௢)
+𝑝 𝑥௧𝑥௧ିଵ = 𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+•Given from Kalman model:
+Bayesian filtering 
+• Bayes’ Rule
+• Given from Kalman model:
+𝑝 𝛼 𝛽 = 𝑃 𝛽 𝛼 𝑃 𝛼
+𝑃(𝛽)
+𝑝 𝑧௧𝑥௧ = 𝒩(𝐶𝑥௧, Σ௢)
+𝑝 𝑥௧𝑥௧ିଵ = 𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+Bayesian filtering 
+• Apply Bayes’ Rule
+𝑝 𝑥௧𝑧௧, 𝑥௧ିଵ = 𝑝 𝑧௧|𝑥௧, 𝑥௧ିଵ 𝑝 𝑥௧|𝑥௧ିଵ
+𝑃(𝑧௧)
+𝑝 𝑥௧𝑥௧ିଵ = 𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠) → 𝛼
+𝑝 𝑧௧𝑥௧ = 𝒩(𝐶𝑥௧, Σ௢) → 𝛽|𝛼
+𝑝 𝛼 𝛽 = 𝑃 𝛽 𝛼 𝑃(𝛼)
+𝑃(𝛽)
+Likelihood
+Prior
+Posterior
+Bayesian filtering 
+• Apply Bayes’ Rule
+𝑝 𝑥௧𝑧௧, 𝑥௧ିଵ = 𝑝 𝑧௧|𝑥௧, 𝑥௧ିଵ 𝑝 𝑥௧|𝑥௧ିଵ
+𝑃(𝑧௧)
+𝑝 𝑥௧𝑥௧ିଵ = 𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠) → 𝛼
+𝑝 𝑧௧𝑥௧ = 𝒩(𝐶𝑥௧, Σ௢) → 𝛽|𝛼
+𝑝 𝛼 𝛽 = 𝑃 𝛽 𝛼 𝑃(𝛼)
+𝑃(𝛽)
+Likelihood
+Prior
+Posterior
+à αà β|α priorlikelihood
+posterior
+Bayesian	filtering	
+• Consolidate	expression	using	special	properties
+• Apply	linear	transform	to	Gaussian	distributions
+• Apply	summation
+2.	Kalman Filter
+H @IJK @I = QN(@I , PI ) + N(0, ΣT )
+H LI @I = RN(@I, PI ) + N(0, ΣU )
+H @IJK @I = N(Q@I , QPI QX ) + N(0, ΣT )
+H LI @I = N(R@I , RPI RX ) + N(0, ΣU )
+H @IJK @I = N(Q@I, QPI QX + ΣT )
+H LI @I = N(R@I , RPI RX + ΣU )
+Bayesian	filtering	
+• Consolidate	expression	using	special	properties
+• Apply	linear	transform	to	Gaussian	distributions
+• Apply	summation
+2.	Kalman Filter
+H @IJK @I = QN(@I , PI ) + N(0, ΣT )
+H LI @I = RN(@I, PI ) + N(0, ΣU )
+H @IJK @I = N(Q@I , QPI QX ) + N(0, ΣT )
+H LI @I = N(R@I , RPI RX ) + N(0, ΣU )
+H @IJK @I = N(Q@I, QPI QX + ΣT )
+H LI @I = N(R@I , RPI RX + ΣU )y
+y y yy
+Bayesian filtering 
+• Bayes’ Rule
+• Given from Kalman model:
+𝑝 𝛼 𝛽 = 𝑃 𝛽 𝛼 𝑃 𝛼
+𝑃(𝛽)
+𝑝 𝑧௧𝑥௧ = 𝒩(𝐶𝑥௧, Σ௢)
+𝑝 𝑥௧𝑥௧ିଵ = 𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+10
+PAGE 11
+Bayesian Filtering•Posterior distribution is another Gaussian•Maximum a Posteriori (MAP) estimates “optimal” xt •Use MAP estimates to form a new mean and variance for the state•Calculate the MAP estimate
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑥௧𝑧௧, 𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+𝑃(𝑧௧)
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝒩(𝐶𝑥௧, Σ௢)𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑥௧𝑧௧, 𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+𝑃(𝑧௧)
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝒩(𝐶𝑥௧, Σ௢)𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑥௧𝑧௧, 𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+𝑃(𝑧௧)
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝒩(𝐶𝑥௧, Σ௢)𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑥௧𝑧௧, 𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+𝑃(𝑧௧)
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝒩(𝐶𝑥௧, Σ௢)𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+yy yy
+Bayesian	filtering	
+• Consolidate	expression	using	special	properties
+• Apply	linear	transform	to	Gaussian	distributions
+• Apply	summation
+2.	KalmanFilter
+H @IJK @I = QN(@I, PI) + N(0,ΣT)
+H LI @I = RN(@I, PI) + N(0, ΣU)
+H @IJK @I = N(Q@I,QPIQX) + N(0, ΣT)
+H LI @I = N(R@I,RPIRX) + N(0, ΣU)
+H @IJK @I = N(Q@I, QPIQX + ΣT)
+H LI @I = N(R@I, RPIRX + ΣU)
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑥௧𝑧௧, 𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+𝑃(𝑧௧)
+ො𝑥௧= argmax
+௫೟
+𝑝 𝑧௧|𝑥௧𝑝 𝑥௧|𝑥௧ିଵ
+ො𝑥௧= argmax
+௫೟
+𝒩(𝐶𝑥௧, Σ௢)𝒩(𝐴𝑥௧ିଵ, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+11
+PAGE 12
+Bayesian Filtering•Let’s try to simplify with these substitutions
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+• Simplify with these substitutions
+• Simplify the exponential form of 𝒩 via logarithms
+ො𝑥௧= argmax
+௫೟
+𝒩(𝐶𝑥௧, Σ௢)𝒩(𝐴𝑥௧, 𝐴𝑃௧ିଵ𝐴்+ Σ௠)
+ො𝑥௧= argmin
+௫೟
+𝑧௧− 𝐶𝑥௧ 𝑅ିଵ 𝑧௧− 𝐶𝑥௧
++ 𝑥௧− 𝐴𝑥௧ିଵ 𝑃ିଵ 𝑥௧− 𝐴𝑥௧ିଵ
+𝑃 = 𝑃௧= 𝐴𝑃௧ିଵ𝐴்+ Σ௠
+𝑅 = Σ௢
+•Simplify the exponential form of N via logs
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+• Simplify with these substitutions
+• Simplify the exponential form of 𝒩via logarithms
+ො𝑥௧=argmax
+௫೟
+𝒩(𝐶𝑥௧,Σ௢)𝒩(𝐴𝑥௧,𝐴𝑃௧ିଵ𝐴்+Σ௠)
+ො𝑥௧=argmin
+௫೟
+𝑧௧−𝐶𝑥௧𝑅ିଵ𝑧௧−𝐶𝑥௧
++ 𝑥௧−𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧−𝐴𝑥௧ିଵ
+𝑃 =𝑃௧=𝐴𝑃௧ିଵ𝐴்+Σ௠
+𝑅 =Σ௢
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+• Simplify with these substitutions
+• Simplify the exponential form of 𝒩via logarithms
+ො𝑥௧=argmax
+௫೟
+𝒩(𝐶𝑥௧,Σ௢)𝒩(𝐴𝑥௧,𝐴𝑃௧ିଵ𝐴்+Σ௠)
+ො𝑥௧=argmin
+௫೟
+𝑧௧−𝐶𝑥௧𝑅ିଵ𝑧௧−𝐶𝑥௧
++ 𝑥௧−𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧−𝐴𝑥௧ିଵ
+𝑃 =𝑃௧=𝐴𝑃௧ିଵ𝐴்+Σ௠
+𝑅 =Σ௢
+Bayesian filtering 
+• Calculate the Maximum A Posteriori Estimate
+• Simplify with these substitutions
+• Simplify the exponential form of 𝒩via logarithms
+ො𝑥௧=argmax
+௫೟
+𝒩(𝐶𝑥௧,Σ௢)𝒩(𝐴𝑥௧,𝐴𝑃௧ିଵ𝐴்+Σ௠)
+ො𝑥௧=argmin
+௫೟
+𝑧௧−𝐶𝑥௧𝑅ିଵ𝑧௧−𝐶𝑥௧
++ 𝑥௧−𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧−𝐴𝑥௧ିଵ
+𝑃 =𝑃௧=𝐴𝑃௧ିଵ𝐴்+Σ௠
+𝑅 =Σ௢
+•Solve optimization by setting derivative = 0
+Bayesian filtering 
+• Solve optimization by setting the derivative to zero
+ො𝑥௧= argmin
+௫೟
+𝑧௧− 𝐶𝑥௧𝑅ିଵ𝑧௧− 𝐶𝑥௧
++ 𝑥௧− 𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧− 𝐴𝑥௧ିଵ
+0 = 𝑑
+𝑑𝑥௧
+𝑧௧− 𝐶𝑥௧𝑅ିଵ𝑧௧− 𝐶𝑥௧
++ 𝑥௧− 𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧− 𝐴𝑥௧ିଵ
+Bayesian filtering 
+• Solve optimization by setting the derivative to zero
+ො𝑥௧= argmin
+௫೟
+𝑧௧− 𝐶𝑥௧𝑅ିଵ𝑧௧− 𝐶𝑥௧
++ 𝑥௧− 𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧− 𝐴𝑥௧ିଵ
+0 = 𝑑
+𝑑𝑥௧
+𝑧௧− 𝐶𝑥௧𝑅ିଵ𝑧௧− 𝐶𝑥௧
++ 𝑥௧− 𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧− 𝐴𝑥௧ିଵ
+Bayesian filtering 
+• Solve optimization by setting the derivative to zero
+ො𝑥௧= argmin
+௫೟
+𝑧௧− 𝐶𝑥௧𝑅ିଵ𝑧௧− 𝐶𝑥௧
++ 𝑥௧− 𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧− 𝐴𝑥௧ିଵ
+0 = 𝑑
+𝑑𝑥௧
+𝑧௧− 𝐶𝑥௧𝑅ିଵ𝑧௧− 𝐶𝑥௧
++ 𝑥௧− 𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧− 𝐴𝑥௧ିଵ
+y y
+y y
+Bayesian	filtering	
+• Consolidate	expression	using	special	properties
+• Apply	linear	transform	to	Gaussian	distributions
+• Apply	summation
+2.	KalmanFilter
+H @IJK @I = QN(@I, PI) + N(0,ΣT)
+H LI @I = RN(@I, PI) + N(0, ΣU)
+H @IJK @I = N(Q@I,QPIQX) + N(0, ΣT)
+H LI @I = N(R@I,RPIRX) + N(0, ΣU)
+H @IJK @I = N(Q@I, QPIQX + ΣT)
+H LI @I = N(R@I, RPIRX + ΣU)
+Bayesian filtering 
+•Calculate the Maximum A Posteriori Estimate
+•Simplify with these substitutions
+•Simplify the exponential form of 𝒩via logarithms
+ො𝑥௧=argmax௫೟
+𝒩(𝐶𝑥௧,Σ௢)𝒩(𝐴𝑥௧,𝐴𝑃௧ିଵ𝐴்+Σ௠)
+ො𝑥௧=argmin௫೟
+𝑧௧−𝐶𝑥௧𝑅ିଵ𝑧௧−𝐶𝑥௧
++𝑥௧−𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧−𝐴𝑥௧ିଵ
+𝑃=𝑃௧=𝐴𝑃௧ିଵ𝐴்+Σ௠𝑅=Σ௢
+Bayesian filtering 
+•Calculate the Maximum A Posteriori Estimate
+•Simplify with these substitutions
+•Simplify the exponential form of 𝒩via logarithms
+ො𝑥௧=argmax௫೟
+𝒩(𝐶𝑥௧,Σ௢)𝒩(𝐴𝑥௧,𝐴𝑃௧ିଵ𝐴்+Σ௠)
+ො𝑥௧=argmin௫೟
+𝑧௧−𝐶𝑥௧𝑅ିଵ𝑧௧−𝐶𝑥௧
++𝑥௧−𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧−𝐴𝑥௧ିଵ
+𝑃=𝑃௧=𝐴𝑃௧ିଵ𝐴்+Σ௠𝑅=Σ௢
+Bayesian filtering 
+•Calculate the Maximum A Posteriori Estimate
+•Simplify with these substitutions
+•Simplify the exponential form of 𝒩via logarithms
+ො𝑥௧=argmax௫೟
+𝒩(𝐶𝑥௧,Σ௢)𝒩(𝐴𝑥௧,𝐴𝑃௧ିଵ𝐴்+Σ௠)
+ො𝑥௧=argmin௫೟
+𝑧௧−𝐶𝑥௧𝑅ିଵ𝑧௧−𝐶𝑥௧
++𝑥௧−𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧−𝐴𝑥௧ିଵ
+𝑃=𝑃௧=𝐴𝑃௧ିଵ𝐴்+Σ௠𝑅=Σ௢
+Bayesian filtering 
+•Calculate the Maximum A Posteriori Estimate
+•Simplify with these substitutions
+•Simplify the exponential form of 𝒩via logarithms
+ො𝑥௧=argmax௫೟
+𝒩(𝐶𝑥௧,Σ௢)𝒩(𝐴𝑥௧,𝐴𝑃௧ିଵ𝐴்+Σ௠)
+ො𝑥௧=argmin௫೟
+𝑧௧−𝐶𝑥௧𝑅ିଵ𝑧௧−𝐶𝑥௧
++𝑥௧−𝐴𝑥௧ିଵ𝑃ିଵ𝑥௧−𝐴𝑥௧ିଵ
+𝑃=𝑃௧=𝐴𝑃௧ିଵ𝐴்+Σ௠𝑅=Σ௢
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ
+y
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ
+12
+PAGE 13
+Bayesian Filtering•Apply Matrix Inversion Lemma1
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ•Define Kalman Gain
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ
+•Expand the terms
+Matrix Inversion Lemma 
+ 
+The Matrix Inversion Lemma is the equation 
+   
+1111 1 1 1
+AB D C A A BDC A B C A
+   
+           ( 1 )  
+Proof:  We construct an augmented matrix A , B , C , and D  and its inverse: 
+ 
+1
+AB EF
+CD GH
+
+ª ºª º
+ « »« »
+¬ ¼¬ ¼
+ ( 2 )  
+We then construct the two products 
+ 
+0
+0
+AB EF A EB G A FB H I
+CD GH C ED GC FD H I
+ ªº ª º ª º ª º
+  «» « » « » « »  ¬¼ ¬ ¼ ¬ ¼ ¬ ¼
+ ( 3 )  
+and 
+ 
+0
+0
+EF AB E A F CE B F D I
+GH CD G AH CG BH D I
+  ªº ª º ª º ª º
+  «» « » « » « »    ¬¼ ¬ ¼ ¬ ¼ ¬ ¼
+ ( 4 )  
+Submatrices in (3) and (4) are broken out to form eight matrix equations: 
+ AE BG I    ( 5 )  
+ 0AF BH    ( 6 )  
+ 0CE DG   ( 7 )  
+ CF DH I    ( 8 )  
+ 
+ EA FC I   ( 9 )  
+ 0EB FD   ( 1 0 )  
+ 0GA HC    ( 1 1 )  
+ GB HD I   ( 1 2 )  
+Combining (5) through (12) in various or ders gives two sets of equations for E , F , G  and 
+H  from A , B , C , and D : 
+  
+11
+EA B D C
+
+     ( 1 3 )  
+  
+111
+FA B D C B D
+ 
+        ( 1 4 )  
+  
+111
+GD C A B D C
+
+        ( 1 5 )  
+  
+111 1 1
+HD DC A B DC B D
+  
+          ( 1 6 )  
+and 
+  
+111 1 1
+EA AB D C AB C A
+  
+          ( 1 7 )  
+  
+111
+FA B D C A B
+
+        ( 1 8 )  
+  
+111
+GD C A B C A
+ 
+        ( 1 9 )  
+  
+11
+HD C A B
+
+    ( 2 0 )  
+The proof is completed by combining either (13) and (17) or (16) and (20).  Conditions 
+are that all the involved inverses exist. 
+1
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ
+Bayesian filtering 
+• Expand the terms
+• Convince yourself that
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝐶்𝑅ିଵ𝑦௧+ 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝑃 − 𝐾𝐶𝑃 𝐶்𝑅ିଵ𝑧௧+ 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐴𝑥௧ିଵ+ 𝑃𝐶்𝑅ିଵ𝑧௧− 𝐾𝐶𝐴𝑥௧ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ𝑧௧
+𝐾 = 𝑃𝐶்𝑅ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ
+𝑥௧= 𝐴𝑥௧ିଵ− 𝐾𝐶𝐴𝑥௧ିଵ+ 𝑃𝐶்𝑅ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ 𝑧௧
+𝑥௧= 𝐴𝑥௧ିଵ− 𝐾𝐶𝐴𝑥௧ିଵ+ 𝐾𝑧௧
+ො𝑥௧= 𝐴𝑥௧ିଵ+ 𝐾 𝑧௧− 𝐶𝐴𝑥௧ିଵ
+Bayesian filtering 
+• Expand the terms
+• Convince yourself that
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝐶்𝑅ିଵ𝑦௧+ 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝑃 − 𝐾𝐶𝑃 𝐶்𝑅ିଵ𝑧௧+ 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐴𝑥௧ିଵ+ 𝑃𝐶்𝑅ିଵ𝑧௧− 𝐾𝐶𝐴𝑥௧ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ𝑧௧
+𝐾 = 𝑃𝐶்𝑅ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ
+𝑥௧= 𝐴𝑥௧ିଵ− 𝐾𝐶𝐴𝑥௧ିଵ+ 𝑃𝐶்𝑅ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ 𝑧௧
+𝑥௧= 𝐴𝑥௧ିଵ− 𝐾𝐶𝐴𝑥௧ିଵ+ 𝐾𝑧௧
+ො𝑥௧= 𝐴𝑥௧ିଵ+ 𝐾 𝑧௧− 𝐶𝐴𝑥௧ିଵ
+Bayesian filtering 
+• Expand the terms
+• Convince yourself that
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝐶்𝑅ିଵ𝑦௧+ 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝑃 − 𝐾𝐶𝑃 𝐶்𝑅ିଵ𝑧௧+ 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐴𝑥௧ିଵ+ 𝑃𝐶்𝑅ିଵ𝑧௧− 𝐾𝐶𝐴𝑥௧ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ𝑧௧
+𝐾 = 𝑃𝐶்𝑅ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ
+𝑥௧= 𝐴𝑥௧ିଵ− 𝐾𝐶𝐴𝑥௧ିଵ+ 𝑃𝐶்𝑅ିଵ− 𝐾𝐶𝑃𝐶்𝑅ିଵ 𝑧௧
+𝑥௧= 𝐴𝑥௧ିଵ− 𝐾𝐶𝐴𝑥௧ିଵ+ 𝐾𝑧௧
+ො𝑥௧= 𝐴𝑥௧ିଵ+ 𝐾 𝑧௧− 𝐶𝐴𝑥௧ିଵ
+... y
+yy
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ
+y
+Bayesian filtering 
+• Collect terms in the derivative
+• Apply the Matrix Inversion Lemma
+• Define Kalman Gain:
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ 𝑥௧= 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝑥௧= 𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ 𝑧௧
+்𝑅ିଵ𝐶 + 𝑃ିଵ𝐴𝑥௧ିଵ
+𝐶்𝑅ିଵ𝐶 + 𝑃ିଵ ିଵ= 𝑃 − 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ𝐶𝑃
+𝐾 = 𝑃𝐶் 𝑅 + 𝐶𝑃𝐶் ିଵ
+13
+PAGE 14
+Bayesian Filtering•We must update the covariance of the state
+Bayesian filtering 
+• Must update the covariance of the state
+෠𝑃௧= 𝑃 − 𝐾𝐶𝑃
+•To summarize:
+UPDATEPREDICT
+14
+PAGE 15
+ØRecursive algorithm that uses a series of noisy measurements observed over time and produces estimates of system states that tend to be more precise than those based on a single measurement. 
+µσ2
+likelihood
+state
+measurements
+prior
+UPDATE
+posterior
+PREDICT
+Kalman Filter 1D
+15
+PAGE 16
+Extended Kalman Filter•Non-linear dynamical system à state transition is function of state, thus it’s hard to predict where the model should be going
+•LINEARIZATION•Jacobian represents the derivative in matrix form of the motion function
+v d = K v
+q
+( x g   x )
+2
++( y g   y )
+2
+(20)
+  = K p ( ✓ d   ✓ ) ,K p > 0 (21)
+ax + by + c =0 (22)
+d =
+ax 0 + by 0 + c
+p
+a
+2
++ b
+2
+(23)
+↵ t =   K t d, K t > 0 (24)
+✓ d = arctan
+  a
+b
+(25)
+↵ h = K h ( ✓ d   ✓ ) ,K h > 0 (26)
+  =   K t d + K h ( ✓ d   ✓ ) (27)
+e =
+p
+( x d   x )
+2
++( y d   y )
+2
+  d d (28)
+v d = K p e + K i
+Z
+ed t (29)
+✓ d = arctan
+✓
+y d   y
+x d   x
+◆
+(30)
+2
+4
+˙x
+˙y
+˙✓
+3
+5 =
+2
+4
+cos ✓ 0
+sin ✓ 0
+01
+3
+5
+
+v
+ 
+ 
+2
+4
+10 0
+00   1
+01 0
+3
+5
+2
+4
+100
+01 0
+00 1
+3
+5
+⇢ =
+q
+ 
+2
+x +  
+2
+y (31)
+↵ = arctan
+  y
+  x
+  ✓ (32)
+  = ✓   ↵ (33)
+2
+4
+˙⇢
+˙↵
+˙ 
+3
+5 =
+2
+4
+  cos ↵ 0
+sin ↵
+⇢
+  1
+ 
+sin ↵
+⇢
+0
+3
+5
+
+v
+ 
+ 
+↵ 2 (   ⇡ / 2 , ⇡ / 2] (34)
+v = K ⇢ ⇢ (35)
+  = K ↵ ↵ + K     (36)
+K ⇢ > 0 ,K   < 0 ,K ↵   K ⇢ > 0 (37)
+˙x 1 = u 1 (38)
+˙x 2 = u 2 (39)
+x 1 = x 2 (40)
+⌦ =
+⇥
+CC AC A
+2
+...C A
+n   1
+⇤ T
+(41)
+U : R
+m
+! R (42)
+r U ( q )=
+
+@ U
+@ q 1
+( q ) ,...,
+@ U
+@ q m
+( q )
+  T
+(43)
+U ( q )= U att ( q )+ U rep ( q ) (44)
+⌧ ( q )=  r U ( q )=  r U att ( q )  r U rep ( q ) (45)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (46)
+U rep ( q )=
+1
+2
+⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+; ⇢ ( q )  ⇢ 0 (47)
+0; ⇢ ( q ) > ⇢ 0 (48)
+F rep ( q )= ⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+1
+⇢
+2
+( q )
+r ⇢ ( q ) (49)
+r ⇢ ( q )=
+q   b
+k q   b k
+(50)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (51)
+F att ( q )=  r U att ( q )=   ⇠ ( q   q g ) (52)
+x =[ xyz  ✓ v x v y v z ! x ! y ! z ]
+T
+(53)
+x t +1 = f ( x t ) (54)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+non-linear motion
+16
+PAGE 17
+Extended Kalman Filter•Covariance prediction
+•Kalman Gain
+v d = K v
+q
+( x g   x )
+2
++( y g   y )
+2
+(20)
+  = K p ( ✓ d   ✓ ) ,K p > 0 (21)
+ax + by + c =0 (22)
+d =
+ax 0 + by 0 + c
+p
+a
+2
++ b
+2
+(23)
+↵ t =   K t d, K t > 0 (24)
+✓ d = arctan
+  a
+b
+(25)
+↵ h = K h ( ✓ d   ✓ ) ,K h > 0 (26)
+  =   K t d + K h ( ✓ d   ✓ ) (27)
+e =
+p
+( x d   x )
+2
++( y d   y )
+2
+  d d (28)
+v d = K p e + K i
+Z
+ed t (29)
+✓ d = arctan
+✓
+y d   y
+x d   x
+◆
+(30)
+2
+4
+˙x
+˙y
+˙✓
+3
+5 =
+2
+4
+cos ✓ 0
+sin ✓ 0
+01
+3
+5
+
+v
+ 
+ 
+2
+4
+10 0
+00   1
+01 0
+3
+5
+2
+4
+100
+01 0
+00 1
+3
+5
+⇢ =
+q
+ 
+2
+x +  
+2
+y (31)
+↵ = arctan
+  y
+  x
+  ✓ (32)
+  = ✓   ↵ (33)
+2
+4
+˙⇢
+˙↵
+˙ 
+3
+5 =
+2
+4
+  cos ↵ 0
+sin ↵
+⇢
+  1
+ 
+sin ↵
+⇢
+0
+3
+5
+
+v
+ 
+ 
+↵ 2 (   ⇡ / 2 , ⇡ / 2] (34)
+v = K ⇢ ⇢ (35)
+  = K ↵ ↵ + K     (36)
+K ⇢ > 0 ,K   < 0 ,K ↵   K ⇢ > 0 (37)
+˙x 1 = u 1 (38)
+˙x 2 = u 2 (39)
+x 1 = x 2 (40)
+⌦ =
+⇥
+CC AC A
+2
+...C A
+n   1
+⇤ T
+(41)
+U : R
+m
+! R (42)
+r U ( q )=
+
+@ U
+@ q 1
+( q ) ,...,
+@ U
+@ q m
+( q )
+  T
+(43)
+U ( q )= U att ( q )+ U rep ( q ) (44)
+⌧ ( q )=  r U ( q )=  r U att ( q )  r U rep ( q ) (45)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (46)
+U rep ( q )=
+1
+2
+⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+; ⇢ ( q )  ⇢ 0 (47)
+0; ⇢ ( q ) > ⇢ 0 (48)
+F rep ( q )= ⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+1
+⇢
+2
+( q )
+r ⇢ ( q ) (49)
+r ⇢ ( q )=
+q   b
+k q   b k
+(50)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (51)
+F att ( q )=  r U att ( q )=   ⇠ ( q   q g ) (52)
+x =[ xyz  ✓ v x v y v z ! x ! y ! z ]
+T
+(53)
+x t +1 = f ( x t ) (54)
+p ( x t   1 | x t )= N ( Ax t , AP t A
+T
++ ⌃ m ) (55)
+p ( x t   1 | x t )= N ( f ( x t ) ,
+@ f
+@ x
+P t
+@ f
+T
+@ x
++ ⌃ m ) (56)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+v d = K v
+q
+( x g   x ) 2 +( y g   y ) 2 (20)
+  = K p ( ✓ d   ✓ ) ,K p > 0 (21)
+ax + by + c =0 (22)
+d =
+ax 0 + by 0 + c
+p
+a 2 + b 2
+(23)
+↵ t =   K t d, K t > 0 (24)
+✓ d = arctan
+  a
+b
+(25)
+↵ h = K h ( ✓ d   ✓ ) ,K h > 0 (26)
+  =   K t d + K h ( ✓ d   ✓ ) (27)
+e =
+p
+( x d   x ) 2 +( y d   y ) 2   d d (28)
+v d = K p e + K i
+Z
+ed t (29)
+✓ d = arctan
+✓
+y d   y
+x d   x
+◆
+(30)
+2
+4
+˙x
+˙y
+˙✓
+3
+5 =
+2
+4
+cos ✓ 0
+sin ✓ 0
+01
+3
+5
+
+v
+ 
+ 
+2
+4
+10 0
+00   1
+01 0
+3
+5
+2
+4
+100
+01 0
+00 1
+3
+5
+⇢ =
+q
+  2
+x +   2
+y (31)
+↵ = arctan
+  y
+  x
+  ✓ (32)
+  = ✓   ↵ (33)
+2
+4
+˙⇢
+˙↵
+˙ 
+3
+5 =
+2
+4
+  cos ↵ 0
+sin ↵
+⇢
+  1
+ 
+sin ↵
+⇢
+0
+3
+5
+
+v
+ 
+ 
+↵ 2 (   ⇡ / 2 , ⇡ / 2] (34)
+v = K ⇢ ⇢ (35)
+  = K ↵ ↵ + K     (36)
+K ⇢ > 0 ,K   < 0 ,K ↵   K ⇢ > 0 (37)
+˙x 1 = u 1 (38)
+˙x 2 = u 2 (39)
+x 1 = x 2 (40)
+⌦ =
+⇥
+CC AC A
+2
+...C A
+n   1
+⇤ T
+(41)
+U : R
+m
+! R (42)
+r U ( q )=
+
+@ U
+@ q 1
+( q ) ,...,
+@ U
+@ q m
+( q )
+  T
+(43)
+U ( q )= U att ( q )+ U rep ( q ) (44)
+⌧ ( q )=  r U ( q )=  r U att ( q )  r U rep ( q ) (45)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (46)
+U rep ( q )=
+1
+2
+⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+; ⇢ ( q )  ⇢ 0 (47)
+0; ⇢ ( q ) > ⇢ 0 (48)
+F rep ( q )= ⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+1
+⇢ 2 ( q )
+r ⇢ ( q ) (49)
+r ⇢ ( q )=
+q   b
+k q   b k
+(50)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (51)
+F att ( q )=  r U att ( q )=   ⇠ ( q   q g ) (52)
+x =[ xyz  ✓ v x v y v z ! x ! y ! z ]
+T
+(53)
+x t +1 = f ( x t ) (54)
+p ( x t   1 | x t )= N ( Ax t , AP t A
+T
++ ⌃ m ) (55)
+p ( x t   1 | x t )= N ( f ( x t ) ,
+@ f
+@ x
+P t
+@ f
+T
+@ x
++ ⌃ m ) (56)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+v d = K v
+q
+( x g   x )
+2
++( y g   y )
+2
+(20)
+  = K p ( ✓ d   ✓ ) ,K p > 0 (21)
+ax + by + c =0 (22)
+d =
+ax 0 + by 0 + c
+p
+a
+2
++ b
+2
+(23)
+↵ t =   K t d, K t > 0 (24)
+✓ d = arctan
+  a
+b
+(25)
+↵ h = K h ( ✓ d   ✓ ) ,K h > 0 (26)
+  =   K t d + K h ( ✓ d   ✓ ) (27)
+e =
+p
+( x d   x )
+2
++( y d   y )
+2
+  d d (28)
+v d = K p e + K i
+Z
+ed t (29)
+✓ d = arctan
+✓
+y d   y
+x d   x
+◆
+(30)
+2
+4
+˙x
+˙y
+˙✓
+3
+5 =
+2
+4
+cos ✓ 0
+sin ✓ 0
+01
+3
+5
+
+v
+ 
+ 
+2
+4
+10 0
+00   1
+01 0
+3
+5
+2
+4
+100
+01 0
+00 1
+3
+5
+⇢ =
+q
+ 
+2
+x +  
+2
+y (31)
+↵ = arctan
+  y
+  x
+  ✓ (32)
+  = ✓   ↵ (33)
+2
+4
+˙⇢
+˙↵
+˙ 
+3
+5 =
+2
+4
+  cos ↵ 0
+sin ↵
+⇢
+  1
+ 
+sin ↵
+⇢
+0
+3
+5
+
+v
+ 
+ 
+↵ 2 (   ⇡ / 2 , ⇡ / 2] (34)
+v = K ⇢ ⇢ (35)
+  = K ↵ ↵ + K     (36)
+K ⇢ > 0 ,K   < 0 ,K ↵   K ⇢ > 0 (37)
+˙x 1 = u 1 (38)
+˙x 2 = u 2 (39)
+x 1 = x 2 (40)
+⌦ =
+⇥
+CC AC A
+2
+...C A
+n   1
+⇤ T
+(41)
+U : R
+m
+! R (42)
+r U ( q )=
+
+@ U
+@ q 1
+( q ) ,...,
+@ U
+@ q m
+( q )
+  T
+(43)
+U ( q )= U att ( q )+ U rep ( q ) (44)
+⌧ ( q )=  r U ( q )=  r U att ( q )  r U rep ( q ) (45)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (46)
+U rep ( q )=
+1
+2
+⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+; ⇢ ( q )  ⇢ 0 (47)
+0; ⇢ ( q ) > ⇢ 0 (48)
+F rep ( q )= ⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+1
+⇢
+2
+( q )
+r ⇢ ( q ) (49)
+r ⇢ ( q )=
+q   b
+k q   b k
+(50)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (51)
+F att ( q )=  r U att ( q )=   ⇠ ( q   q g ) (52)
+x =[ xyz  ✓ v x v y v z ! x ! y ! z ]
+T
+(53)
+x t +1 = f ( x t ) (54)
+p ( x t   1 | x t )= N ( Ax t , AP t A
+T
++ ⌃ m ) (55)
+p ( x t   1 | x t )= N ( f ( x t ) ,
+@ f
+@ x
+P t
+@ f
+T
+@ x
++ ⌃ m ) (56)
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(57)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(58)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. ?? , wind might help the UA V reach a goal that
+is farther away while consuming less energy than a closer
+goal. The problem is that, since the disturbances are causal,
+we might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+violation of a monitored property. Authors in [ ? ] propose a
+Learning-Based Model Predictive Control (MPC) to learn the
+ground effect and the unknown trajectory of a ball thrown
+to a quadrotor that needs to plan its trajectory to catch it.
+Similarly, in [ ? ] the authors also use a MPC approach to
+generate state interception trajectories for a quadrotor in real
+time. Another similar work, [ ? ], proposes a least-squares
+method to estimate the inertial parameters (mass and center
+of mass) of a load grasped by a quadrotor, to improve its
+ﬂight performance. From a recovery point of view, in [ ? ] the
+authors demonstrate how to stabilize a quadrotor even after
+a complete loss of up to three of the four propellers. From a
+formal method point of view, in [ ? ] the authors deal with
+health monitoring of UA V missions using linear-temporal
+Jacobian of observation function
+v d = K v
+q
+( x g   x ) 2 +( y g   y ) 2 (20)
+  = K p ( ✓ d   ✓ ) ,K p > 0 (21)
+ax + by + c =0 (22)
+d =
+ax 0 + by 0 + c
+p
+a 2 + b 2
+(23)
+↵ t =   K t d, K t > 0 (24)
+✓ d = arctan
+  a
+b
+(25)
+↵ h = K h ( ✓ d   ✓ ) ,K h > 0 (26)
+  =   K t d + K h ( ✓ d   ✓ ) (27)
+e =
+p
+( x d   x ) 2 +( y d   y ) 2   d d (28)
+v d = K p e + K i
+Z
+ed t (29)
+✓ d = arctan
+✓
+y d   y
+x d   x
+◆
+(30)
+2
+4
+˙x
+˙y
+˙✓
+3
+5 =
+2
+4
+cos ✓ 0
+sin ✓ 0
+01
+3
+5
+
+v
+ 
+ 
+2
+4
+10 0
+00   1
+01 0
+3
+5
+2
+4
+100
+01 0
+00 1
+3
+5
+⇢ =
+q
+  2
+x +   2
+y (31)
+↵ = arctan
+  y
+  x
+  ✓ (32)
+  = ✓   ↵ (33)
+2
+4
+˙⇢
+˙↵
+˙ 
+3
+5 =
+2
+4
+  cos ↵ 0
+sin ↵
+⇢
+  1
+ 
+sin ↵
+⇢
+0
+3
+5
+
+v
+ 
+ 
+↵ 2 (   ⇡ / 2 , ⇡ / 2] (34)
+v = K ⇢ ⇢ (35)
+  = K ↵ ↵ + K     (36)
+K ⇢ > 0 ,K   < 0 ,K ↵   K ⇢ > 0 (37)
+˙x 1 = u 1 (38)
+˙x 2 = u 2 (39)
+x 1 = x 2 (40)
+⌦ =
+⇥
+CC AC A
+2
+...C A
+n   1
+⇤T
+(41)
+U : R
+m
+! R (42)
+r U ( q )=
+
+@ U
+@ q 1
+( q ) ,...,
+@ U
+@ q m
+( q )
+  T
+(43)
+U ( q )= U att ( q )+ U rep ( q ) (44)
+⌧ ( q )=  r U ( q )=  r U att ( q )  r U rep ( q ) (45)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (46)
+U rep ( q )=
+1
+2
+⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+; ⇢ ( q )  ⇢ 0 (47)
+0; ⇢ ( q ) > ⇢ 0 (48)
+F rep ( q )= ⌘
+✓
+1
+⇢ ( q )
+ 
+1
+⇢ 0
+◆
+1
+⇢ 2 ( q )
+r ⇢ ( q ) (49)
+r ⇢ ( q )=
+q   b
+k q   b k
+(50)
+U att ( q )=
+1
+2
+⇠ ( k q   q g k
+2
+) (51)
+F att ( q )=  r U att ( q )=   ⇠ ( q   q g ) (52)
+x =[ xyz  ✓ v x v y v z ! x ! y ! z ]
+T
+(53)
+x t +1 = f ( x t ) (54)
+z t +1 = h ( x t ) (55)
+p ( x t   1 | x t )= N ( Ax t , AP t A
+T
++ ⌃ m ) (56)
+p ( x t   1 | x t )= N ( f ( x t ) ,
+@ f
+@ x
+P t
+@ f
+T
+@ x
++ ⌃ m ) (57)
+•Overall update
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+violation of a monitored property. Authors in [ ? ] propose a
+Learning-Based Model Predictive Control (MPC) to learn the
+ground effect and the unknown trajectory of a ball thrown
+to a quadrotor that needs to plan its trajectory to catch it.
+Similarly, in [ ? ] the authors also use a MPC approach to
+generate state interception trajectories for a quadrotor in real
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+violation of a monitored property. Authors in [ ? ] propose a
+Learning-Based Model Predictive Control (MPC) to learn the
+ground effect and the unknown trajectory of a ball thrown
+to a quadrotor that needs to plan its trajectory to catch it.
+Similarly, in [ ? ] the authors also use a MPC approach to
+generate state interception trajectories for a quadrotor in real
+17
+PAGE 18
+Unscented Kalman Filter•Noise distribution characterized by a set of points•points transformed in non-linear fashion•UKF continually re-estimates the distribution statistics of the mean and covariance for recalculating Gaussian distribution to characterize uncertainty•Model the distribution based on a set of sigma points•sigma points: typically characterize the covariance of a matrix about a standard deviation from the mean and including the means as one of the sigma points.
+18
+PAGE 19
+Unscented Kalman Filter•The statistics of the sigma points will have the same mean and covariance of the underlying Gaussian distribution•New distribution after the motion model is applied will not be gaussian•However: we can approximate the new distribution by computing the statistics of the sigma points x_t•Approximate a Gaussian with first two moments
+19
+PAGE 20
+Unscented Kalman Filter•State prediction (i.e. tracking the expected state over time)•Mean of sigma points run through dynamic system
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+violation of a monitored property. Authors in [ ? ] propose a
+Learning-Based Model Predictive Control (MPC) to learn the
+ground effect and the unknown trajectory of a ball thrown
+χ0χ1
+χ2 χ2
+χ0χ1
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+violation of a monitored property. Authors in [ ? ] propose a
+Learning-Based Model Predictive Control (MPC) to learn the
+ground effect and the unknown trajectory of a ball thrown
+•Uncertainty prediction•Covariance of sigma points run through dynamic system
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+P t +1 | x t
+=
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+f (   i )   x t +1 | x t
+  T
+(63)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. ?? , wind might help the UA V reach a goal that
+is farther away while consuming less energy than a closer
+goal. The problem is that, since the disturbances are causal,
+we might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+P t +1 | x t
+=
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+f (   i )   x t +1 | x t
+  T
+(63)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. ?? , wind might help the UA V reach a goal that
+is farther away while consuming less energy than a closer
+goal. The problem is that, since the disturbances are causal,
+we might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+20
+PAGE 21
+Unscented Kalman Filter•Expected Observation•Mean of sigma points expected observation
+χ0χ1
+χ2 χ2
+χ0χ1
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+violation of a monitored property. Authors in [ ? ] propose a
+Learning-Based Model Predictive Control (MPC) to learn the
+ground effect and the unknown trajectory of a ball thrown
+•Kalman Gain•Utilize sigma points, not observation model
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+P t +1 | x t
+=
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+f (   i )   x t +1 | x t
+  T
+(63)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. ?? , wind might help the UA V reach a goal that
+is farther away while consuming less energy than a closer
+goal. The problem is that, since the disturbances are causal,
+we might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+z t +1 | x t
+=
+1
+N  
+X
+i
+h (   i ) (63)
+P t +1 | x t
+=
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+f (   i )   x t +1 | x t
+  T
+(64)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+z t +1 | x t
+=
+1
+N  
+X
+i
+h (   i ) (63)
+P t +1 | x t
+=
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+f (   i )   x t +1 | x t
+ T
+(64)
+K =
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+h ( f (   i ))   z t +1 | x t
+ T
+ 
+1
+N  
+X
+i
+ 
+h ( f (   i ))   z t +1 | x t
+  
+h ( f (   i ))   z t +1 | x t
+ T
+!   1
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+z t +1 | x t
+=
+1
+N  
+X
+i
+h (   i ) (63)
+P t +1 | x t
+=
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+f (   i )   x t +1 | x t
+ T
+(64)
+K =
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+h ( f (   i ))   z t +1 | x t
+ T
+ 
+1
+N  
+X
+i
+ 
+h ( f (   i ))   z t +1 | x t
+  
+h ( f (   i ))   z t +1 | x t
+ T
+!   1
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+21
+PAGE 22
+Unscented Kalman Filter•Update just as the linear filter•The covariance update will be slightly different•https://youtu.be/DWDzmweTKsQ
+χ0χ1
+χ2 χ2
+χ0χ1
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. 1, wind might help the UA V reach a goal that is
+farther away while consuming less energy than a closer goal.
+The problem is that, since the disturbances are causal, we
+might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+violation of a monitored property. Authors in [ ? ] propose a
+Learning-Based Model Predictive Control (MPC) to learn the
+ground effect and the unknown trajectory of a ball thrown
+K = PC
+T
+( ⌃ 0 + CPC
+T
+)
+  1
+(58)
+K = P
+@ h
+T
+@ x
+✓
+⌃ 0 +
+@ h
+@ x
+P T
+@ h
+T
+@ x
+◆   1
+(59)
+ˆx t = f ( x t   1 )+ K ( z t   h ( f ( x t ))) (60)
+ˆP t = P   K
+@ h
+@ x
+P (61)
+x t +1 | x t
+=
+1
+N  
+X
+i
+f (   i ) (62)
+P t +1 | x t
+=
+1
+N  
+X
+i
+ 
+f (   i )   x t +1 | x t
+  
+f (   i )   x t +1 | x t
+  T
+(63)
+In recent years we have witnessed an increasing interest in
+using unmanned aerial vehicles (UA Vs) for both military and
+civilian operations. From longstanding research areas such
+as homeland security, search and rescue missions, disaster
+relief operations, surveillance, to more recent applications
+such as hobby photography and transportation (e.g., Amazon
+Prime Air, FAA-approved drone for medicine delivery
+1
+),
+UA Vs have demonstrated great technological advantages and
+the myriad ways in which they can be applied are only
+increasing.
+Even though the control performance and operation of
+these systems has become very sophisticated, a big challenge
+still remains on how to guarantee at run time that they
+can safely coordinate and achieve a desired goal (e.g.,
+reaching a target and return to a base station). In fact,
+most control strategies usually assume one of the following
+limiting conditions: either i) there are no disturbances and the
+system is not compromised, operating in perfect conditions
+(e.g., battery fully charged, no environment disturbances)
+or ii) worst-case scenarios are considered (e.g., maximum
+energy consumption, strong environment disturbance), which
+in most cases is an unnecessary over-constrained condition
+that results in bad performance and underuse of resources.
+To overcome these limitations and leverage the full power
+Fig. 1. Motivational cartoon representation of the case study used in this
+work. Due to the disturbance, a UA V might consume less energy to reach
+goal g 2 even though g 1 is closer.1
+http://www.theverge.com/2015/7/20/9002639/
+first-legal-faa-approved-drone-delivery
+and capabilities of these aerial vehicles, in this work we
+introduce a generalizable framework for online prediction
+and planning that takes into consideration the dynamics of
+these UA Vs to guarantee both safety (i.e., something “bad”
+will never happen) and liveness (i.e., something “good” will
+eventually happen).
+To this end, we use a model-predictive approach paired
+with self-triggered scheduling techniques to: i) estimate
+safety critical states, ii) predict the future steps of the
+system, iii) plan and replan its motion, and iv) schedule next
+replanning time. We will refer to this procedure in short as
+online planning .
+The speciﬁc case study considered in this work is a single
+UA V with a set of possible unprioritized goals. However,
+we are interested in seeking out the goal for which the
+total energy consumption is lowest, which depends on the
+unknown disturbances in the system. For instance, as shown
+in Fig. ?? , wind might help the UA V reach a goal that
+is farther away while consuming less energy than a closer
+goal. The problem is that, since the disturbances are causal,
+we might incorrectly decide on the best goal to aim for. In
+general, this problem requires constant replanning to ensure
+that the goal the UA V is aimed at is the best one. Rather
+than making this decision periodically, we propose the self-
+triggered and self/event-triggered scheduling policies that
+determine, based on currently available information, at what
+time in the future the UA V will replan its motion. The general
+idea is that as the UA V gets closer to a targeted goal, the
+cost to go to this goal will be decreasing while others may be
+increasing. This means that periodically evaluating the target
+goal is wasteful, and thus we opt for our proposed aperiodic
+scheduling algorithms.
+A. Related Work
+The study of unmanned aerial vehicles and in particular
+quadrotors has been gaining a lot of popularity among the
+robotics and control community due to their robustness and
+simplicity of control. For example, in [ ? ] a quadrotor is used
+as a wireless relay node to maximize the communication
+throughput and quality between two sources; in [ ? ], [ ? ]
+quadrotors are used to optimally carry loads, and in [ ? ],
+[ ? ] the authors use vision-based control to coordinate and
+plan the motion for these UA Vs. All of the above mentioned
+works are mostly concerned with motion and path planning
+problems and assume either ideal or worst case situations.
+In reality, these systems may be subject to disturbances and
+other unmodeled constraints that, if not handled properly
+at run time, could prevent the correct performance and
+realization of a given objective.
+In the literature, we ﬁnd some works dealing with a few
+aspects related to this problem of run-time monitoring and
+planning. [ ? ] offers a comprehensive survey about the state
+of the art on run-time monitoring and checking and current
+issues. The authors point out that current challenges lie
+in how to: i) reduce the checking overhead, ii) select the
+right properties to monitor, iii) select the right feedback
+for an external observer, and iv) recover after detecting a
+•Taking the UKF to the limit à Particle filter•… before we need to talk about Mapping
+22
+PAGE 23
+23
+PAGE 24
+Introduction to Mapping•Map is a spatial model of a robot’s environment•Mapping is a process for building a map•Consideration for mapping•map representation•available sensors•purpose of mapping•Types of maps•Metric (e.g. world map)•Topological (e.g. subway map)•Semantic (e.g. labeled maps)
+RiceOlsson
+24
+PAGE 25
+Introduction to Mapping•Challenges
+•Noisy measurements in local coordinates•Motion involved•changes over time
+•Today: Occupancy Grid Mapping
+25
+PAGE 26
+26
+
+PAGE 27
+RGB-D Sensor – Kinect, Asus Xtion, PrimeSense, OAK, RealSense•camera•depth sensor: •monochrome CMOS sensor•infrared projector•microphone array
+27
+PAGE 28
+wall
+space
+28
+PAGE 29
+Occupancy Grid Mapping•Occupancy: binary random variable1
+Occupancy Grid Mapping
+• Occupancy: binary R.V.
+𝑚௫,௬: 𝑓𝑟𝑒𝑒, 𝑜𝑐𝑐𝑢𝑝𝑖𝑒𝑑 → { 0 , 1 }
+[Review – Into Probability]
+Given some probability space (Ω, 𝑃),
+a random variable 𝑋: Ω → 𝑅 is a function that 
+maps the sample space to the reals.
+1Given some probability space (Ω,P), a random variable X:ΩàR is a function that maps the sample space to the reals 
+•Occupancy grid map•fine-grained grid map where an occupancy variable is associated with each cell
+Occupancy Grid Mapping
+• Occupancy: binary R.V.
+• Occupancy grid map
+: fine-grained grid map where an occupancy variable associated 
+with each cell 
+𝑚௫,௬: 𝑓𝑟𝑒𝑒, 𝑜𝑐𝑐𝑢𝑝𝑖𝑒𝑑 → { 0 , 1 }
+𝑚ଵ,ଵ 𝑚ଵ,ଶ 𝑚ଵ,ଷ …
+𝑥
+𝑦
+𝑚௫,௬
+…
+29
+PAGE 30
+Occupancy Grid Mapping•Occupancy grid mapping•a Bayesian filtering to maintain an occupancy grid map• Occupancy grid mapping
+: A Bayesian filtering to maintain a occupancy grid map.
+Recursively update                       for each cell
+Occupancy Grid Mapping
+𝑝(𝑚௫,௬)
+𝑝(𝑚ଵ,ଷ) …
+𝑥
+𝑦
+… 𝑝(𝑚௫,௬)
+0 1(𝑥, 𝑦)
+𝑝(𝑚ଵ,ଶ)𝑝(𝑚ଵ,ଵ)
+recursively update                    for each cell 
+• Occupancy grid mapping
+: A Bayesian filtering to maintain a occupancy grid map.
+Recursively update                       for each cell
+Occupancy Grid Mapping
+𝑝(𝑚௫,௬)
+𝑝(𝑚ଵ,ଷ) …
+𝑥
+𝑦
+… 𝑝(𝑚௫,௬)
+0 1(𝑥, 𝑦)
+𝑝(𝑚ଵ,ଶ)𝑝(𝑚ଵ,ଵ)
+30
+PAGE 31
+Occupancy Grid Mapping•MeasurementOccupancy Grid Mapping
+• Measurement 
+𝑧~{ 0 , 1 }
+Occupied
+Free
+a range sensorrange sensor
+31
+
+PAGE 32
+Occupancy Grid Mapping•Measurement model
+true occupied measurement
+Occupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚௫,௬)
+𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 0
+: True occupied measurement
+: False free measurement
+: False occupied measurement
+: True free measurement
+𝑧~{ 0 , 1 }
+Occupied
+Free
+Occupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚௫,௬)
+𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 0
+: True occupied measurement
+: False free measurement
+: False occupied measurement
+: True free measurement
+𝑧~{ 0 , 1 }
+Occupied
+Free
+Occupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚௫,௬)
+𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 0
+: True occupied measurement
+: False free measurement
+: False occupied measurement
+: True free measurement
+𝑧~{ 0 , 1 }
+Occupied
+Free
+false free measurementfalse occupied measurementtrue free measurement
+Occupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚௫,௬)
+𝑝 𝑧 = 1|𝑚௫,௬ = 1
+𝑝 𝑧 = 0|𝑚௫,௬= 1 = 1 − 𝑝 𝑧 = 1|𝑚௫,௬ = 1
+𝑝 𝑧 = 1|𝑚௫,௬ = 0
+𝑝 𝑧 = 0|𝑚௫,௬ = 0 = 1 − 𝑝 𝑧 = 1|𝑚௫,௬= 0
+[Review – Into Probability]
+𝑃 𝐴஼|𝐵 = 1 − 𝑃(𝐴|𝐵)
+𝑧~{ 0 , 1 }
+Occupied
+FreeOccupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚௫,௬)
+𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 0
+: True occupied measurement
+: False free measurement
+: False occupied measurement
+: True free measurement
+𝑧~{ 0 , 1 }
+Occupied
+Free
+Occupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚௫,௬)
+𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 0
+: True occupied measurement
+: False free measurement
+: False occupied measurement
+: True free measurement
+𝑧~{ 0 , 1 }
+Occupied
+Free
+Occupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚௫,௬)
+𝑝 𝑧 = 1|𝑚௫,௬ = 1
+𝑝 𝑧 = 0|𝑚௫,௬= 1 = 1 − 𝑝 𝑧 = 1|𝑚௫,௬ = 1
+𝑝 𝑧 = 1|𝑚௫,௬ = 0
+𝑝 𝑧 = 0|𝑚௫,௬ = 0 = 1 − 𝑝 𝑧 = 1|𝑚௫,௬= 0
+[Review – Into Probability]
+𝑃 𝐴஼|𝐵 = 1 − 𝑃(𝐴|𝐵)
+𝑧~{ 0 , 1 }
+Occupied
+Free
+Occupancy Grid Mapping
+• Measurement 
+• Measurement model 
+𝑝(𝑧|𝑚 ௫,௬)
+𝑝 𝑧 = 1|𝑚 ௫,௬ = 1
+𝑝 𝑧 = 0|𝑚 ௫,௬ = 1 = 1 − 𝑝 𝑧 = 1|𝑚 ௫,௬ = 1
+𝑝 𝑧 = 1|𝑚 ௫,௬ = 0
+𝑝 𝑧 = 0|𝑚 ௫,௬ = 0 = 1 − 𝑝 𝑧 = 1|𝑚 ௫,௬ = 0
+[Review – Into Probability]
+𝑃 𝐴஼|𝐵 = 1 − 𝑃 (𝐴|𝐵 )
+𝑧~ { 0 , 1 }
+Occupied
+Free
+From Probability 101:
+32
+
+PAGE 33
+Occupancy Grid MappingOccupancy Grid Mapping
+𝑝(𝑧|𝑚௫,௬)
+Prior MapMeasurement 
+Model
+𝑝 𝑚௫,௬|𝑧 = 𝑝(𝑧|𝑚௫,௬)𝑝(𝑚௫,௬)
+𝑝(𝑧)
+Posterior Map
+𝑝(𝑚௫,௬)𝑝(𝑚௫,௬|𝑧)
+PriorLikelihood
+Posterior
+Evidence
+Occupancy Grid Mapping
+𝑝(𝑧|𝑚௫,௬)
+Prior MapMeasurement 
+Model
+𝑝 𝑚௫,௬|𝑧 = 𝑝(𝑧|𝑚௫,௬)𝑝(𝑚௫,௬)
+𝑝(𝑧)
+Posterior Map
+𝑝(𝑚௫,௬)𝑝(𝑚௫,௬|𝑧)
+PriorLikelihood
+Posterior
+Evidence
+Occupancy Grid Mapping
+𝑝(𝑧|𝑚௫,௬)
+Prior MapMeasurement 
+Model
+𝑝 𝑚௫,௬|𝑧 = 𝑝(𝑧|𝑚௫,௬)𝑝(𝑚௫,௬)
+𝑝(𝑧)
+Posterior Map
+𝑝(𝑚௫,௬)𝑝(𝑚௫,௬|𝑧)
+PriorLikelihood
+Posterior
+Evidence
+Posterior MapMeasurement ModelPrior Map
+Occupancy Grid Mapping
+𝑝(𝑧|𝑚௫,௬)
+Prior MapMeasurement 
+Model
+𝑝 𝑚௫,௬|𝑧 = 𝑝(𝑧|𝑚௫,௬)𝑝(𝑚௫,௬)
+𝑝(𝑧)
+Posterior Map
+𝑝(𝑚௫,௬)𝑝(𝑚௫,௬|𝑧)
+Bayes’ Rule:Bayes’ Rule:PosteriorLikelihoodPrior
+Evidence
+33
+PAGE 34
+Occupancy Grid Mapping•Let’s introduce the Odd function
+Occupancy Grid Mapping
+• More convenient when we use “Odd”
+𝑂𝑑𝑑((𝑚௫,௬= 1) 𝑔𝑖𝑣𝑒𝑛 𝑧) = 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+𝑂𝑑𝑑: = (𝑋 ℎ𝑎𝑝𝑝𝑒𝑛𝑠)
+(𝑋 𝑛𝑜𝑡 ℎ𝑎𝑝𝑝𝑒𝑛𝑠) = 𝑝(𝑋)
+𝑝(𝑋௖)
+•It becomes more convenient
+Occupancy Grid Mapping
+• More convenient when we use “Odd”
+𝑂𝑑𝑑((𝑚௫,௬= 1) 𝑔𝑖𝑣𝑒𝑛 𝑧) = 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+𝑂𝑑𝑑: = (𝑋 ℎ𝑎𝑝𝑝𝑒𝑛𝑠)
+(𝑋 𝑛𝑜𝑡 ℎ𝑎𝑝𝑝𝑒𝑛𝑠) = 𝑝(𝑋)
+𝑝(𝑋௖)
+•Let’s go back to the Bayes’ Rule
+Occupancy Grid Mapping
+• Odd
+𝑂𝑑𝑑 = 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+𝑝 𝑚௫,௬= 1|𝑧 = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧)
+= 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)/𝑝(𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+(Bayes’ Rule)
+Occupancy Grid Mapping
+• Take the log! 
+𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬= 0)
+log 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = log 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬= 0)
+= log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0 + log 𝑝 𝑚௫,௬= 1
+𝑝 𝑚௫,௬= 0
+Odd:
+Log-Odd:
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+Occupancy Grid Mapping
+• Odd
+𝑂𝑑𝑑 = 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+𝑝 𝑚௫,௬= 1|𝑧 = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧)
+= 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)/𝑝(𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+(Bayes’ Rule)
+Occupancy Grid Mapping
+• Odd
+𝑂𝑑𝑑 = 𝑝(𝑚௫,௬ = 1|𝑧)
+𝑝(𝑚௫,௬ = 0|𝑧)
+𝑝 𝑚௫,௬= 1|𝑧 = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧)
+= 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬ = 1)/𝑝(𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+(Bayes’ Rule)
+34
+PAGE 35
+Occupancy Grid Mapping
+• Take the log! 
+𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬= 0)
+log 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = log 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬= 0)
+= log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0 + log 𝑝 𝑚௫,௬= 1
+𝑝 𝑚௫,௬= 0
+Odd:
+Log-Odd:
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+Occupancy Grid Mapping
+• Odd
+𝑂𝑑𝑑 = 𝑝(𝑚௫,௬ = 1|𝑧)
+𝑝(𝑚௫,௬ = 0|𝑧)
+𝑝 𝑚௫,௬= 1|𝑧 = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧)
+= 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬ = 1)/𝑝(𝑧)
+𝑝(𝑚௫,௬= 0|𝑧)
+(Bayes’ Rule)
+Occupancy Grid Mapping
+• Odd
+𝑂𝑑𝑑 = 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)/𝑝(𝑧)
+𝑝 𝑧 𝑚௫,௬= 0 𝑝 𝑚௫,௬= 0 /𝑝(𝑧)
+(Bayes’ Rule)
+𝑝 𝑚௫,௬= 0|𝑧 = 𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬= 0)
+𝑝(𝑧)
+•Repeating for the denominator:
+•Taking the log:
+Occupancy Grid Mapping
+• Take the log! 
+𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬= 0)
+log 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = log 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬ = 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬ = 0)
+= log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0 + log 𝑝 𝑚௫,௬= 1
+𝑝 𝑚௫,௬= 0
+Odd:
+Log-Odd:
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+Occupancy Grid Mapping
+• Take the log! 
+𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬= 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬= 0)
+log 𝑝(𝑚௫,௬= 1|𝑧)
+𝑝(𝑚௫,௬= 0|𝑧) = log 𝑝(𝑧|𝑚௫,௬= 1)𝑝(𝑚௫,௬ = 1)
+𝑝(𝑧|𝑚௫,௬= 0)𝑝(𝑚௫,௬ = 0)
+= log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0 + log 𝑝 𝑚௫,௬= 1
+𝑝 𝑚௫,௬= 0
+Odd:
+Log-Odd:
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+LOG-ODD UPDATE
+Occupancy Grid Mapping
+• Log-odd update
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+Log-odd-meas
+Prior MapMeasurement 
+Model
+Posterior Map
+Log-oddLog-odd
+35
+PAGE 36
+Occupancy Grid Mapping•Log-odd update
+Occupancy Grid Mapping
+• Log-odd update
+Prior MapMeasurement 
+Model
+Posterior Map
+Log-odd-meas
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+Posterior MapMeasurement ModelPrior Map
+Occupancy Grid Mapping
+• Log-odd update
+Prior MapMeasurement 
+Model
+Posterior Map
+Log-odd-meas
+log 𝑜𝑑𝑑ା = log 𝑜𝑑𝑑 𝑚𝑒𝑎𝑠 + log 𝑜𝑑𝑑ି
+•Two possible measurements
+Occupancy Grid Mapping
+• Measurement model in log-odd form 
+log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 : = log 𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 : = log 𝑝 𝑧 = 0|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+• Two possible measurement: 
+Case I : cells with z=1
+Case II : cells with z=0
+(Trivial Case : cells not measured)
+Occupancy Grid Mapping
+• Measurement model in log-odd form 
+log 𝑝 𝑧|𝑚௫,௬= 1
+𝑝 𝑧|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 : = log 𝑝 𝑧 = 1|𝑚௫,௬= 1
+𝑝 𝑧 = 1|𝑚௫,௬= 0
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 : = log 𝑝 𝑧 = 0|𝑚௫,௬= 0
+𝑝 𝑧 = 0|𝑚௫,௬= 1
+• Two possible measurement: 
+Case I : cells with z=1
+Case II : cells with z=0
+(Trivial Case : cells not measured)
+Case 1: cells with z=1
+Case 2: cells with z=0
+36
+
+PAGE 37
+Example•Constant Measurement Model
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+•Initial Map
+log odd_occ := 0.9log odd_free := 0.7 log odd_occ+ = log odd_meas UPDATE RULE:
+log odd = 0    for all (x,y)
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+Occupancy Grid Mapping
+t0
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+measurement
+-.7-.7-.7-.7-.7
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+t1
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+•Update•Case 1: cells with z=1log odd ß 0 + log odd_occ •Case 2: cells with z=0log odd ß 0 - log odd_free 37
+00000000000000000 000000000
+-.7-.7-.7-.7-.7.9
+00000000000000000 000000000
+measurement
+-.7-.7-.7 -.7-.7
+00000000000000000000000000000000
+
+PAGE 38
+Example•Constant Measurement Model
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+•Initial Map
+log odd_occ := 0.9log odd_free := 0.7 log odd_occ+ = log odd_meas UPDATE RULE:
+log odd = 0    for all (x,y)
+Occupancy Grid Mapping
+• Example
+Constant Measurement Model
+Initial Map:
+log 𝑜𝑑𝑑 = 0 for all (x,y) 
+𝑝 𝑚௫,௬= 1 = 𝑝 𝑚௫,௬= 0 = 0.5
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+t0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+Occupancy Grid Mapping
+t0
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+measurement
+-.7-.7-.7-.7-.7
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+t1
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+Occupancy Grid Mapping
+t0
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+measurement
+-.7-.7-.7-.7-.7
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+t1
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+•Update•Case 1: cells with z=1log odd ß 0 + log odd_occ •Case 2: cells with z=0log odd ß 0 - log odd_free 
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+Occupancy Grid Mapping
+t1
+t2
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+.9 -.7-.7-.7
+-.7-.7 -.7
+measurement
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+0 0 0 0 0 0
+0 0
+0
+0 0 0 0 0 0
+.9 -.7-.7-1.4 -1.4
+.9 -.7-.7 -.7 0
+0
+-1.4
+0
+0
+0
+0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0
+0 0 0 0 0 0 0 0
+.9 -.7-.7-.7-.7-.7
+• Example 
+Constant Measurement Model
+Update
+Case I : cells with z=1
+Case II : cells with z=0
+Occupancy Grid Mapping
+t1
+t2
+log 𝑜𝑑𝑑 += log 𝑜𝑑𝑑_𝑚𝑒𝑎𝑠
+Update Rule:
+.9 -.7-.7-.7
+-.7-.7 -.7
+measurement
+log 𝑜𝑑𝑑 ← 0 + log 𝑜𝑑𝑑_𝑜𝑐𝑐
+log 𝑜𝑑𝑑 ← 0 − log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒
+log 𝑜𝑑𝑑_𝑜𝑐𝑐 ≔ 0.9
+log 𝑜𝑑𝑑_𝑓𝑟𝑒𝑒 ≔ 0.7
+0 0 0 0 0 0
+0 0
+0
+0 0 0 0 0 0
+.9 -.7-.7-1.4 -1.4
+.9 -.7-.7 -.7 0
+0
+-1.4
+0
+0
+0
+0 0
+belief becomes higher!38
+00000000000000000 000000000
+-.7-.7-.7-.7-.7.9
+000000000 00000 000000000
+measurement
+-.7-.7-.7 -.7-.7
+000000000 0000 000000000-1.4-.7-.7.9
+ -1.4-1.4.9 -.7-.7-.7

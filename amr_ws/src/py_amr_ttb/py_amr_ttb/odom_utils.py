@@ -10,10 +10,9 @@ def normalize_angle(angle):
 
 def quaternion_to_yaw(q):
     """Return planar heading in radians from a unit ROS quaternion."""
-    return math.atan2(
-        2.0 * (q.w * q.z + q.x * q.y),
-        1.0 - 2.0 * (q.y * q.y + q.z * q.z),
-    )
+    yaw_sine = 2.0 * (q.w * q.z + q.x * q.y)
+    yaw_cosine = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(yaw_sine, yaw_cosine)
 
 
 def relative_pose(x, y, yaw, initial_x, initial_y, initial_yaw):
@@ -22,30 +21,37 @@ def relative_pose(x, y, yaw, initial_x, initial_y, initial_yaw):
     Positions are in meters and angles in radians. Capture the initial pose
     after any external odometry reset and keep it fixed for the entire run.
     """
-    dx = x - initial_x
-    dy = y - initial_y
-    c = math.cos(initial_yaw)
-    s = math.sin(initial_yaw)
+    offset_x = x - initial_x
+    offset_y = y - initial_y
+    cosine = math.cos(initial_yaw)
+    sine = math.sin(initial_yaw)
+    # Rotate the world-frame displacement back into the initial robot axes.
     return (
-        c * dx + s * dy,
-        -s * dx + c * dy,
+        cosine * offset_x + sine * offset_y,
+        -sine * offset_x + cosine * offset_y,
         normalize_angle(yaw - initial_yaw),
     )
 
 
 def read_planar_pose(message):
     """Read finite x/y/yaw, normalizing the quaternion; reject invalid poses."""
-    p = message.pose.pose.position
-    q = message.pose.pose.orientation
-    values = (p.x, p.y, q.x, q.y, q.z, q.w)
-    if not all(math.isfinite(v) for v in values):
+    position = message.pose.pose.position
+    orientation = message.pose.pose.orientation
+    quaternion = (orientation.x, orientation.y, orientation.z, orientation.w)
+    pose_values = (position.x, position.y, *quaternion)
+    if not all(math.isfinite(value) for value in pose_values):
         raise ValueError('Non-finite odometry pose')
-    norm = math.hypot(q.x, q.y, q.z, q.w)
+
+    norm = math.hypot(*quaternion)
     if norm < 1e-12 or not math.isfinite(norm):
         raise ValueError('Invalid odometry quaternion')
-    x, y, z, w = (v / norm for v in (q.x, q.y, q.z, q.w))
-    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-    return p.x, p.y, yaw
+
+    # The normalized quaternion is local data; never mutate the ROS message.
+    x, y, z, w = (value / norm for value in quaternion)
+    yaw_sine = 2 * (w * z + x * y)
+    yaw_cosine = 1 - 2 * (y * y + z * z)
+    yaw = math.atan2(yaw_sine, yaw_cosine)
+    return position.x, position.y, yaw
 
 
 def odometry_is_fresh(now, last_received, timeout):

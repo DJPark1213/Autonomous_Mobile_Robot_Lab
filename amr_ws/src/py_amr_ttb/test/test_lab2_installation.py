@@ -31,7 +31,9 @@ class InstallationTests(unittest.TestCase):
         installed = {Path(path).name for path in launches}
         for name in ('go_to_goal', 'square', 'star', 'circle', 'heart'):
             self.assertIn(f'lab2_{name}.launch.py', installed)
-        self.assertEqual(len(installed), 12)
+        self.assertEqual(installed, {path.name for path in (package / 'launch').glob('*.launch.py')})
+        self.assertIn('lab3_go_to_goal.launch.py', installed)
+        self.assertIn('lab3_replay.launch.py', installed)
         self.assertNotIn('lab2_shape.launch.py', installed)
         scripts = captured['entry_points']['console_scripts']
         self.assertIn('lab2_star = py_amr_ttb.lab2.lab2_star:main', scripts)

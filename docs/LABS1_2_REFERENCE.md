@@ -1,0 +1,827 @@
+# Earlier labs: historical README reference
+
+The detailed Lab 1 and Lab 2 material previously shown on the repository and
+workspace landing pages is preserved here. These are historical notes; use
+the [Lab 1 demo guide](../amr_ws/src/py_amr_ttb/py_amr_ttb/demo/README.md) and
+[Lab 2 guide](../amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/README.md) for lab-specific
+documentation, and check source configuration before relying on old examples.
+
+[Return to the Lab 3 overview](../README.md#lab-3-maze-escape).
+
+## Lab 2 work plan
+
+The optional heart task is implemented separately from the star. See the
+[heart guide](../amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/HEART_README.md).
+Its smooth curves, sharp-point stops and completion pass offline simulation;
+Ubuntu build and heart robot validation remain pending.
+
+**Due October 15, 2026 in lab (team plan).** The instructor's detailed Lab 2
+assignment is not in the saved slides; confirm dimensions and pursuit requirements.
+
+| Owner | Work | Current status |
+| --- | --- | --- |
+| DJ (handoff from Aiden) | Task 1: go to goal | Implemented, including relative pose, stop/turn/go, completion stop and odometry checks; robot validation pending |
+| Hammouh | Task 2: square | Original route behavior refactored onto shared utilities; executable/launch available; owner tuning and robot demonstration pending |
+| Jianyu | Task 3: circle | Circle pursuit, lap stopping and module launch are present; circle recordings are included |
+| DJ | Extra: interesting shape | Renamed to lab2_star; radius 0.45 m retained; robot movement reported by team, saved star trajectory still pending |
+| DJ | Shared support | Pose utilities, configuration, waypoint math, launches for existing tasks, CSV recorder, plotting, offline checks and handoff guide implemented |
+
+See the [Lab 2 developer and demo guide](../amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/README.md)
+and [current checklist](LAB2_HANDOFF.md). The
+[original Word plan](Lab_2_Team_Work_Plan.docx) is historical planning material;
+it predates the current implementation and go-to-goal handoff to DJ.
+
+Lab 2 nodes remain in `py_amr_ttb/lab2/`, shared pose utilities in
+`py_amr_ttb/odom_utils.py`, launch files in `amr_ws/src/py_amr_ttb/launch/`, and recording/plotting
+in `amr_ws/scripts/plot_lab2.py`. Shared settings remain in `lab_config.py`.
+Existing Lab 1 demos remain in `demo/`.
+
+- [x] Adopt the fixed starting robot frame and document optional odometry reset.
+- [x] Implement shared math/configuration and refactor existing nodes.
+- [x] Complete go-to-goal and DJ's star implementation.
+- [x] Add launch integration for available tasks and measured-data plotting tools.
+- [x] Integrate circle pursuit and lap detection (Jianyu); recorded circle CSVs are included.
+- [ ] Confirm instructor specifications; build and check discovery/QoS on Ubuntu.
+- [ ] Tune and demonstrate tasks, verify one velocity publisher, save recordings and measured plots.
+
+Offline checks use ROS doubles and ideal kinematics; they are not robot results.
+See the [pull review and star migration](PULL_REVIEW_2026_10_20.md) and
+[heart proposal](HEART_PROPOSAL.md).
+
+---
+
+# AMR Lab One
+
+ROS 2 Humble + TurtleBot 4 implementation of:
+
+- **Task 1:** Joystick teleoperation
+- **Task 2:** IR-based autonomous wandering
+- **Task 3:** PID speed control
+- **Task 4:** Integrated WANDER / CRUISE / TELEOP controller
+
+---
+
+## 1. Setup
+
+After modifying the code:
+
+```bash
+cd ~/amr_ws
+colcon build --packages-select py_amr_ttb
+source install/setup.bash
+```
+
+For every new terminal:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/amr_ws/install/setup.bash
+```
+
+---
+
+## 2. How to Run
+
+### Task 1 — Joystick Teleoperation
+
+Run:
+
+```bash
+ros2 launch py_amr_ttb py_lab_one_joystick.launch.py
+```
+
+Controls:
+
+- Left stick up/down (`Axis 1`) → forward/backward
+- Right stick left/right (`Axis 3`) → turn left/right
+
+Stop with `Ctrl+C`.
+
+Main source:
+
+```text
+lab_one_joystick.py
+└── joy_callback()
+```
+
+Key code:
+
+```python
+self.subscriber_ = self.create_subscription(
+    Joy,
+    '/TTB10/joy',
+    self.joy_callback,
+    qos_profile
+)
+
+self.publisher_ = self.create_publisher(
+    Twist,
+    '/TTB10/cmd_vel',
+    10
+)
+
+def joy_callback(self, msg):
+    self.axes = msg.axes
+    self.linear_x = self.axes[1]
+    self.angular_z = self.axes[3]
+
+    new_msg = Twist()
+    new_msg.linear.x = 0.7 * self.linear_x
+    new_msg.angular.z = 0.7 * self.angular_z
+    self.publisher_.publish(new_msg)
+```
+
+Data flow:
+
+```text
+/TTB10/joy
+     ↓
+joy_callback()
+     ↓
+Twist
+     ↓
+/TTB10/cmd_vel
+     ↓
+Robot
+```
+
+---
+
+### Task 2 — Autonomous Wandering
+
+#### Run controller only
+
+```bash
+ros2 launch py_amr_ttb task2_wander.launch.py
+```
+
+The robot repeatedly:
+
+```text
+Drive forward
+     ↓
+Detect obstacle with IR
+     ↓
+Stop
+     ↓
+Turn left/right
+     ↓
+Check again
+     ↓
+Continue driving
+```
+
+#### Run with plot and rosbag
+
+```bash
+bash ~/amr_ws/run_lab.sh 2
+```
+
+This starts the Task 2 controller, the plot helper, `rqt_plot`, and rosbag recording.
+
+Stop the experiment from the same terminal with `Ctrl+C`.
+
+#### Task 2 plot
+
+The plot shows:
+
+```text
+ir_front_left
+ir_front_center_left
+ir_front_center_right
+ir_front_right
+threshold
+```
+
+Current IR configuration:
+
+```python
+IR_FRONT_SENSOR_INDICES = (1, 2, 3, 4)
+IR_OBSTACLE_THRESHOLD = 35
+IR_OBSTACLE_WHEN_ABOVE_THRESHOLD = True
+```
+
+Sensor order:
+
+```text
+0: left
+1: front left
+2: front center left
+3: front center right
+4: front right
+5: right
+```
+
+An obstacle is detected if any selected front IR value is greater than or equal to the threshold.
+
+Full plot topics:
+
+```text
+/TTB10/lab_plot/ir_front_left/data
+/TTB10/lab_plot/ir_front_center_left/data
+/TTB10/lab_plot/ir_front_center_right/data
+/TTB10/lab_plot/ir_front_right/data
+/TTB10/lab_plot/threshold/data
+```
+
+Main source files:
+
+```text
+ir_sensor.py
+wander_behavior.py
+lab_config.py
+```
+
+Obstacle detection:
+
+```python
+def obstacle_detected(self):
+    values = self.values
+    indices = self.config.IR_FRONT_SENSOR_INDICES
+
+    if indices is not None:
+        values = [self.values[index] for index in indices]
+
+    threshold = float(self.config.IR_OBSTACLE_THRESHOLD)
+
+    if self.config.IR_OBSTACLE_WHEN_ABOVE_THRESHOLD:
+        return any(value >= threshold for value in values)
+
+    return any(value <= threshold for value in values)
+```
+
+Wander state machine:
+
+```python
+class WanderState(Enum):
+    DRIVE = 'drive'
+    TURN = 'turn'
+```
+
+Core behavior:
+
+```python
+def command(self, now, ir_state):
+    obstacle = ir_state.obstacle_detected()
+
+    if self.state is WanderState.DRIVE:
+        if obstacle:
+            self._begin_random_turn(now)
+            return Twist(), None
+
+        output = Twist()
+        output.linear.x = self.config.WANDER_FORWARD_SPEED
+        return output, None
+
+    if now >= self.turn_end_time:
+        if obstacle:
+            self._begin_random_turn(now)
+            return Twist(), None
+
+        self.state = WanderState.DRIVE
+        return Twist(), None
+
+    output = Twist()
+    output.angular.z = (
+        self.turn_direction * self.config.WANDER_TURN_SPEED
+    )
+    return output, None
+```
+
+Current wandering parameters:
+
+```python
+WANDER_FORWARD_SPEED = 0.3
+WANDER_TURN_SPEED = 0.4
+WANDER_TURN_MIN_TIME = 0.8
+WANDER_TURN_MAX_TIME = 1.8
+```
+
+---
+
+### Task 3 — PID Speed Control
+
+#### Run controller only
+
+```bash
+ros2 launch py_amr_ttb task3_pid.launch.py
+```
+
+Default target speed:
+
+```text
+0.3 m/s
+```
+
+#### Run with plot and rosbag
+
+```bash
+bash ~/amr_ws/run_lab.sh 3
+```
+
+This starts the Task 3 PID controller, the plot helper, `rqt_plot`, and rosbag recording.
+
+#### Task 3 plot
+
+The plot shows:
+
+```text
+target_speed
+measured_speed
+command_speed
+```
+
+| Curve | Meaning |
+|---|---|
+| `target_speed` | Desired speed |
+| `measured_speed` | Actual speed from `/TTB10/odom` |
+| `command_speed` | PID output sent through `/TTB10/cmd_vel` |
+
+Full plot topics:
+
+```text
+/TTB10/lab_plot/measured_speed/data
+/TTB10/lab_plot/target_speed/data
+/TTB10/lab_plot/command_speed/data
+```
+
+Main source files:
+
+```text
+lab_one_pid.py
+pid_speed_controller.py
+lab_config.py
+```
+
+ROS interface in `lab_one_pid.py`:
+
+```python
+self.publisher = self.create_publisher(
+    Twist,
+    self.config.CMD_VEL_TOPIC,
+    10
+)
+
+self.odom_subscription = self.create_subscription(
+    Odometry,
+    self.config.ODOM_TOPIC,
+    self.odom_callback,
+    qos_profile_sensor_data
+)
+```
+
+Measured speed:
+
+```python
+def odom_callback(self, message):
+    self.measured_speed = message.twist.twist.linear.x
+    self.last_odom_time = time.monotonic()
+```
+
+PID update:
+
+```python
+def update(self, setpoint, measurement, dt):
+    error = setpoint - measurement
+
+    self.integral += error * dt
+
+    derivative = (
+        error - self.previous_error
+    ) / dt
+
+    self.output += (
+        self.config.KP * error
+        + self.config.KI * self.integral
+        + self.config.KD * derivative
+    )
+
+    self.output = max(
+        self.min_output,
+        min(self.max_output, self.output)
+    )
+
+    self.previous_error = error
+    return self.output
+```
+
+Current PID parameters:
+
+```python
+KP = 0.1
+KI = 0.001
+KD = 0.03
+
+PID_TARGET_SPEED = 0.3
+PID_MIN_OUTPUT = 0.0
+PID_MAX_OUTPUT = 0.4
+```
+
+Control loop:
+
+```text
+target_speed
+      │
+      ▼
+    Error ◄──── measured_speed
+      │
+      ▼
+     PID
+      │
+      ▼
+command_speed
+      │
+      ▼
+/TTB10/cmd_vel
+```
+
+Use the plot to inspect rise time, overshoot, oscillation, and steady-state error.
+
+---
+
+### Task 4 — Integrated Controller
+
+Run:
+
+```bash
+ros2 launch py_amr_ttb py_lab_one_controller.launch.py
+```
+
+The controller starts in `STOP`.
+
+Controls:
+
+| Button | Function |
+|---|---|
+| `L1` | Select WANDER |
+| `L2` | Select CRUISE |
+| Hold `R1` | Temporary TELEOP override |
+
+CRUISE target speeds:
+
+| Button | Target speed |
+|---|---:|
+| Cross / X | 0.0 m/s |
+| Square | 0.1 m/s |
+| Triangle | 0.2 m/s |
+| Circle | 0.4 m/s |
+
+While `R1` is held, joystick control temporarily overrides the selected mode. Releasing `R1` returns to the previous WANDER or CRUISE mode.
+
+Main source:
+
+```text
+lab_one_controller.py
+```
+
+Persistent modes:
+
+```python
+class Mode(Enum):
+    STOP = 'stop'
+    WANDER = 'wander'
+    CRUISE = 'cruise'
+```
+
+Task 4 creates one final velocity publisher and three subscribers:
+
+```python
+self.publisher = self.create_publisher(
+    Twist,
+    self.config.CMD_VEL_TOPIC,
+    10,
+)
+
+self.ir_subscription = self.create_subscription(
+    IrIntensityVector,
+    self.config.IR_TOPIC,
+    self.ir_callback,
+    qos_profile_sensor_data,
+)
+
+self.joy_subscription = self.create_subscription(
+    Joy,
+    self.config.JOY_TOPIC,
+    self.joy_callback,
+    qos_profile_sensor_data,
+)
+
+self.odom_subscription = self.create_subscription(
+    Odometry,
+    self.config.ODOM_TOPIC,
+    self.odom_callback,
+    qos_profile_sensor_data,
+)
+```
+
+Mode and target-speed selection:
+
+```python
+def joy_callback(self, message):
+    self.previous_buttons = self.buttons
+    self.buttons = list(message.buttons)
+    self.axes = list(message.axes)
+
+    if self.pressed(self.config.BUTTON_R1):
+        self.reset_pid()
+        return
+
+    if self.newly_pressed(self.config.BUTTON_L1):
+        self.selected_mode = Mode.WANDER
+
+    elif self.newly_pressed(self.config.BUTTON_L2):
+        self.selected_mode = Mode.CRUISE
+
+    if self.selected_mode is Mode.CRUISE:
+        if self.newly_pressed(self.config.BUTTON_CROSS):
+            new_target = 0.0
+        elif self.newly_pressed(self.config.BUTTON_SQUARE):
+            new_target = 0.1
+        elif self.newly_pressed(self.config.BUTTON_TRIANGLE):
+            new_target = 0.2
+        elif self.newly_pressed(self.config.BUTTON_CIRCLE):
+            new_target = 0.4
+```
+
+Final control arbitration:
+
+```python
+def controller_callback(self):
+    now = self.now_seconds()
+
+    if self.pressed(self.config.BUTTON_R1):
+        command, warning = self.teleop_command(now)
+
+    elif self.selected_mode is Mode.WANDER:
+        command, warning = self.wander_command(now)
+
+    elif self.selected_mode is Mode.CRUISE:
+        command, warning = self.cruise_command(now, dt)
+
+    else:
+        command, warning = Twist(), None
+
+    self.publisher.publish(command)
+```
+
+This is the key Task 4 design rule:
+
+> Only `LabOneController` publishes the final `/TTB10/cmd_vel` command.
+
+This prevents multiple behaviors from sending conflicting commands at the same time.
+
+---
+
+## 3. `run_lab.sh`
+
+`run_lab.sh` is an experiment helper for Task 2 and Task 3.
+
+Use:
+
+```bash
+bash ~/amr_ws/run_lab.sh 2
+```
+
+or:
+
+```bash
+bash ~/amr_ws/run_lab.sh 3
+```
+
+The script selects the correct launch file and plot curves:
+
+```bash
+case "$task" in
+    2)
+        launch_file="task2_wander.launch.py"
+        curves=(ir_front_left ir_front_center_left
+                ir_front_center_right ir_front_right threshold)
+        ;;
+    3)
+        launch_file="task3_pid.launch.py"
+        curves=(measured_speed target_speed command_speed)
+        ;;
+esac
+```
+
+It also creates simple `Float64` topics for plotting.
+
+Task 2 plot helper:
+
+```python
+node.create_subscription(
+    IrIntensityVector,
+    C.IR_TOPIC,
+    on_ir,
+    qos_profile_sensor_data,
+)
+```
+
+Task 3 plot helper:
+
+```python
+node.create_subscription(
+    Odometry,
+    C.ODOM_TOPIC,
+    lambda msg: emit(
+        "measured_speed",
+        msg.twist.twist.linear.x
+    ),
+    qos_profile_sensor_data,
+)
+
+node.create_subscription(
+    Twist,
+    C.CMD_VEL_TOPIC,
+    lambda msg: emit(
+        "command_speed",
+        msg.linear.x
+    ),
+    qos_profile_sensor_data,
+)
+```
+
+The plot helper is only for visualization. It does not control robot motion.
+
+---
+
+## 4. ROS Topics
+
+| Topic | Message Type | Purpose |
+|---|---|---|
+| `/TTB10/joy` | `sensor_msgs/Joy` | Joystick input |
+| `/TTB10/ir_intensity` | `irobot_create_msgs/IrIntensityVector` | IR proximity data |
+| `/TTB10/odom` | `nav_msgs/Odometry` | Odometry and measured speed |
+| `/TTB10/cmd_vel` | `geometry_msgs/Twist` | Robot velocity command |
+
+---
+
+## 5. Publisher / Subscriber Summary
+
+| Task | Subscribers | Publisher |
+|---|---|---|
+| Task 1 | `/TTB10/joy` | `/TTB10/cmd_vel` |
+| Task 2 | `/TTB10/ir_intensity` | `/TTB10/cmd_vel` |
+| Task 3 | `/TTB10/odom` | `/TTB10/cmd_vel` |
+| Task 4 | `/TTB10/joy`, `/TTB10/ir_intensity`, `/TTB10/odom` | `/TTB10/cmd_vel` |
+
+External ROS components:
+
+```text
+Joystick driver
+    └── publishes /TTB10/joy
+
+Robot IR sensors
+    └── publish /TTB10/ir_intensity
+
+Robot odometry
+    └── publishes /TTB10/odom
+
+Robot base
+    └── subscribes to /TTB10/cmd_vel
+```
+
+---
+
+## 6. Overall Architecture
+
+```text
+Task 1:
+Joystick → Teleoperation → Robot
+
+Task 2:
+IR → Obstacle Detection → WanderBehavior → Robot
+
+Task 3:
+Odometry → PID → Robot
+
+Task 4:
+
+             Joystick
+                │
+IR ────────> LabOneController <──── Odometry
+                │
+                ▼
+         /TTB10/cmd_vel
+                │
+                ▼
+              Robot
+```
+
+---
+
+## 7. Useful Debug Commands
+
+Show running ROS nodes:
+
+```bash
+ros2 node list
+```
+
+Show available topics:
+
+```bash
+ros2 topic list
+```
+
+Check IR:
+
+```bash
+ros2 topic echo /TTB10/ir_intensity
+```
+
+Check odometry:
+
+```bash
+ros2 topic echo /TTB10/odom
+```
+
+Check velocity commands:
+
+```bash
+ros2 topic echo /TTB10/cmd_vel
+```
+
+Check which node is publishing robot commands:
+
+```bash
+ros2 topic info /TTB10/cmd_vel --verbose
+```
+
+Pay attention to:
+
+```text
+Publisher count
+Node name
+```
+
+There should not be multiple unintended controllers publishing `/TTB10/cmd_vel` at the same time.
+
+---
+
+## Previous workspace notes
+
+
+For Lab 2 assignments and remaining work, see the [repository work plan](#lab-2-work-plan) and [one-page Word plan](Lab_2_Team_Work_Plan.docx). Lab 2 nodes and logic live together in `src/py_amr_ttb/py_amr_ttb/lab2/`; Lab 1 task demos live in `demo/` beside it.
+
+For current Lab 2 code, recording commands, and shared utility usage, see
+[src/py_amr_ttb/py_amr_ttb/lab2/README.md](../amr_ws/src/py_amr_ttb/py_amr_ttb/lab2/README.md).
+The Word plan is historical. Go-to-goal completion is now DJ's responsibility.
+
+## Lab 1 integrated controller
+
+The combined controller now connects the existing IR/wandering code to the
+supplied joystick mode selection and cruise PID logic. It starts in STOP and
+publishes zero velocity until a mode is selected. Physical validation, bags,
+and plots remain pending.
+
+### Controls
+
+- L1 selects WANDER and resets its drive/turn state.
+- L2 selects CRUISE, initially at 0.3 m/s. Subsequent entries retain the last target.
+- In CRUISE: Square = 0.1, Triangle = 0.2, Circle = 0.4, X = 0.0 m/s.
+- Holding R1 temporarily selects teleoperation; releasing it restores the
+  selected mode. Mode and speed button selections are ignored while R1 is held.
+
+Joystick logic lives directly in `lab_one_controller.py`. The existing
+`IrSensorState` and `WanderBehavior` handle obstacle detection and wandering.
+`PidSpeedController` owns cruise calculation/history; it implements the pasted
+equation `target + Kp*error + Ki*integral + Kd*derivative`, including integral
+limits and conditional anti-windup. This is not the handout's incremental
+output equation; confirm the required form before final acceptance.
+
+The timer is the sole normal command publisher; shutdown also sends a zero
+command. Missing/stale IR stops wandering, missing/stale odometry stops cruise,
+and missing/stale or non-finite joystick axes stop an R1 override. X in cruise
+clears PID memory and commands zero even without odometry. Clock jumps or long
+timer gaps reset PID timing. Autonomous modes use their sensor timeouts and
+do not require a continuous joystick stream; a stale held R1 remains stopped
+until a fresh release message arrives.
+
+`lab_config.py` holds topics, axes, scales, timing, PID limits, and the existing
+IR calibration. Threshold 35 and front sensor indices 1–4 are retained.
+
+### Build and run on Ubuntu
+
+```bash
+cd ~/amr_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select py_amr_ttb
+source install/setup.bash
+ros2 launch py_amr_ttb py_lab_one_controller.launch.py
+```
+
+This launch is active, not an idle template. Start with wheels raised and run
+only one motion controller: do not run `lab_one_joystick` or `ttb_turn` alongside
+the combined node. Verify ROS topic types/QoS and stop/override behavior before
+floor trials. ROS 2 and the dependencies in `package.xml` must be installed.
+
+### Offline checks
+
+```bash
+python3 -m unittest discover -s src/py_amr_ttb/test -p test_controller_logic.py -v
+```
+
+These tests use ROS interface doubles and the real behavior modules. They do
+not validate discovery, QoS, message transport, or physical robot behavior.
+Run the ROS package checks and robot trials separately on Ubuntu.

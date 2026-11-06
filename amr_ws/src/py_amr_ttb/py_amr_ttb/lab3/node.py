@@ -1,320 +1,246 @@
-"""ROS 2 adapter for Lab 3: goal, wander and optional cluster-follow modes."""
+"""ROS 2 adapter: fresh sensors and 20 Hz control, with a separate planning process."""
 
-import csv
 from dataclasses import fields
-from datetime import datetime, timezone
 import math
-from pathlib import Path
+import multiprocessing as mp
 import time
-import uuid
 
 import rclpy
-from geometry_msgs.msg import Twist
-from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import String
 from std_srvs.srv import Trigger
-from tf2_ros import Buffer, TransformException, TransformListener
+from tf2_ros import Buffer, TransformListener, TransformException
 
-from .odometry import read_planar_pose, relative_pose
-from .core import Config, process_scan
-from .navigation import make_navigator
-from .follow import Follower
+from py_amr_ttb.lab_config import Lab3Config
+from py_amr_ttb.odom_utils import read_planar_pose
+from .geometry import process_scan, compose
+from .motion import MotionController
+from .state import StateTracker
+from .telemetry import Telemetry
+from .types import MotionResult
+from .worker import Work, worker_main, put_latest, take_latest
 
 
-class Lab3Controller(Node):
-    """Circle-style absolute robot topics and local receipt watchdogs."""
+def stamp_seconds(stamp):
+    return stamp.sec+stamp.nanosec*1e-9
 
+
+def laser_transform(transform):
+    """Support horizontal upright or inverted lasers, rejecting tilted scan planes."""
+    q = transform.rotation
+    norm = math.hypot(q.x, q.y, q.z, q.w)
+    if not math.isfinite(norm) or norm < 1e-12:
+        raise ValueError('Invalid laser rotation')
+    x, y, z, w = (value/norm for value in (q.x, q.y, q.z, q.w))
+    zx, zy, zz = 2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)
+    if max(abs(zx), abs(zy)) > .03:
+        raise ValueError('Laser scan plane is not horizontal')
+    yaw = math.atan2(2*(x*y+z*w), 1-2*(y*y+z*z))
+    t = transform.translation
+    return (t.x, t.y, yaw), 1. if zz > 0 else -1.
+
+
+class Lab3Node(Node):
     def __init__(self):
         super().__init__('lab3_controller')
-        defaults = Config()
-        values = {f.name: self.declare_parameter(f.name, getattr(defaults, f.name)).value
-                  for f in fields(Config)}
-        self.cfg = Config(**values)
-        self.mode = self.declare_parameter('mode', 'goal').value
-        if self.mode not in ('goal', 'wander', 'follow'):
-            raise ValueError('mode must be goal, wander or follow')
-        self.robot_namespace = self.declare_parameter(
-            'robot_namespace', Config.ROBOT_NAMESPACE).value
-        prefix = self.robot_namespace
-        if not prefix.startswith('/') or prefix == '/' or prefix.endswith('/'):
-            raise ValueError('robot_namespace must be absolute without a trailing slash, e.g. /TTB10')
-        self.odom_topic = prefix + '/odom'
-        self.scan_topic = prefix + '/scan'
-        self.cmd_topic = prefix + '/cmd_vel'
-        self.diagnostic_prefix = prefix + '/lab3'
-        self.base_frame = self.declare_parameter('base_frame', 'base_link').value
-        self.log_dir = self.declare_parameter('log_dir', '~/amr_lab3_runs').value
-        self.pose = None
-        self.origin = None
-        self.odom_frame = None
-        self.scan = None
-        self.odom_received = None
-        self.scan_received = None
-        self.last_tick = None
-        self.status = ''
-        self.last_problem = ''
-        self.sensor_problems = {'odom': 'waiting for first valid message',
-                                'scan': 'waiting for first valid scan and scan-to-base TF'}
-        self.last_status_detail = ''
-        self.last_status_log = -math.inf
-        self.fatal = ''
-        self.nav = make_navigator(self.cfg)
-        self.follower = Follower(self.cfg)
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.publisher = self.create_publisher(Twist, self.cmd_topic, 10)
-        self.status_publisher = self.create_publisher(String, self.diagnostic_prefix+'/status', 10)
-        # Use the same sensor QoS as the working Lab 2 circle node.
-        self.odom_sub = self.create_subscription(
-            Odometry, self.odom_topic, self.odom_callback, qos_profile_sensor_data)
-        self.scan_sub = self.create_subscription(
-            LaserScan, self.scan_topic, self.scan_callback, qos_profile_sensor_data)
-        self.reset_service = self.create_service(
-            Trigger, self.diagnostic_prefix+'/reset', self.reset_callback)
-        self.stop_service = self.create_service(
-            Trigger, self.diagnostic_prefix+'/stop', self.stop_callback)
-        self.log_file = None
-        self.writer = None
-        if self.log_dir:
-            folder = Path(self.log_dir).expanduser()
-            folder.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-            name = f'{self.mode}_{stamp}_{uuid.uuid4().hex[:6]}.csv'
-            self.log_file = (folder / name).open('x', newline='', buffering=1)
-            self.writer = csv.writer(self.log_file)
-            self.writer.writerow(('elapsed_s', 'mode', 'state', 'x_m', 'y_m', 'yaw_rad',
-                                  'goal_x_m', 'goal_y_m', 'goal_error_m', 'v_m_s', 'w_rad_s',
-                                  'F', 'FL', 'L', 'BL', 'B', 'BR', 'R', 'FR',
-                                  'behavior', 'obstacle_distance_m', 'wall_entry_goal_distance_m',
-                                  'goal_normal_dot', 'goal_corridor_clear', 'planner',
-                                  'field_x', 'field_y', 'repulsion_magnitude', 'tangent_weight',
-                                  'fallback_count', 'fallback_reason', 'phase', 'reason',
-                                  'measured_speed_m_s', 'target_heading_rad',
-                                  'available_travel_m', 'side_switch_count'))
-            self.get_logger().info(f'CSV: {folder / name}')
-        self.started_at = time.monotonic()
+        defaults = Lab3Config()
+        values = {field.name: self.declare_parameter(field.name, getattr(defaults, field.name)).value
+                  for field in fields(defaults)}
+        self.cfg = Lab3Config(**values)
+        self.tracker = StateTracker(self.cfg)
+        self.controller = MotionController(self.cfg)
+        self.scan = self.plan = None
+        self.sequence = 0
+        self.last_scan_stamp = float('-inf')
+        self.last_tick = time.monotonic()
+        self.last_submit = float('-inf')
+        self.last_reason = None
+        self.result = MotionResult()
+        self.fault = None
+        self.paused = False
+        self.publisher = self.create_publisher(Twist, self.cfg.topic('cmd_vel'), 1)
+        self.tf = Buffer()
+        self.tf_listener = TransformListener(self.tf, self)
+        self.odom_subscription = self.create_subscription(
+            Odometry, self.cfg.topic('odom'), self.on_odom, qos_profile_sensor_data)
+        self.scan_subscription = self.create_subscription(
+            LaserScan, self.cfg.topic('scan'), self.on_scan, qos_profile_sensor_data)
+        self.telemetry = Telemetry(self.cfg.log_dir, self.cfg.run_mode)
+        self.start_worker()
+        self.services = [self.create_service(Trigger, '~/'+name, callback)
+                         for name, callback in (('stop', self.stop_run), ('reset', self.reset_run),
+                                                ('save', self.save_run))]
         self.timer = self.create_timer(self.cfg.control_period, self.tick)
-        self.get_logger().info(
-            f'Lab3 mode={self.mode}, planner={self.cfg.planner}; '
-            f'odom={self.odom_topic}, scan={self.scan_topic}, cmd_vel={self.cmd_topic}. '
-            'Waiting for odometry and laser data; freshness uses local receipt time.')
+        self.get_logger().info(f'Lab 3 {self.cfg.run_mode}; telemetry: {self.telemetry.path}')
 
-    def sensor_problem(self, kind, reason):
-        """Retain independent sensor errors so one stream cannot hide the other."""
-        self.sensor_problems[kind] = reason
-        self.last_problem = f'{kind}: {reason}'
+    def start_worker(self):
+        context = mp.get_context('spawn')
+        self.incoming, self.outgoing = context.Queue(1), context.Queue(1)
+        self.stopping, self.save_requested = context.Event(), context.Event()
+        self.worker = context.Process(target=worker_main, args=(
+            self.cfg, self.incoming, self.outgoing, self.stopping, self.save_requested), daemon=True)
+        self.worker.start()
 
-    def odom_callback(self, message):
-        """Capture the initial pose once and retain its coordinate frame."""
+    def stop_worker(self):
+        self.stopping.set()
+        self.worker.join(timeout=3.)
+        if self.worker.is_alive():
+            self.worker.terminate()
+            self.worker.join(timeout=1.)
+            self.get_logger().error('Worker did not exit; final save may be incomplete')
+        for queue in (self.incoming, self.outgoing):
+            queue.cancel_join_thread()
+            queue.close()
+
+    def source_age(self, stamp):
+        age = self.get_clock().now().nanoseconds*1e-9-stamp
+        if not -.05 <= age <= self.cfg.sensor_timeout:
+            raise ValueError('Sensor acquisition timestamp is stale or in the future')
+        return max(0., age)
+
+    def on_odom(self, message):
+        now = time.monotonic()
         try:
-            raw = read_planar_pose(message)
+            stamp = stamp_seconds(message.header.stamp)
+            received = now-self.source_age(stamp)
+            if message.child_frame_id != self.cfg.base_frame:
+                raise ValueError('Odometry twist frame differs from configured base_frame')
+            self.tracker.update(read_planar_pose(message), message.twist.twist.linear.x,
+                                message.twist.twist.angular.z, stamp, received,
+                                message.header.frame_id, message.pose.covariance)
         except ValueError as error:
-            self.odom_received = None
-            self.sensor_problem('odom', str(error))
-            return
-        now = time.monotonic()
-        frame = message.header.frame_id
-        if not frame:
-            self.odom_received = None
-            self.sensor_problem('odom', 'empty odometry frame')
-            return
-        if self.origin is None:
-            self.origin, self.odom_frame = raw, frame
-            self.get_logger().info('Starting pose captured; fixed goal origin is ready.')
-        if frame != self.odom_frame:
-            self.fatal = 'ODOM_FRAME_CHANGED_RESET_REQUIRED'
-            self.odom_received = None
-            return
-        new_pose = relative_pose(*raw, *self.origin)
-        if self.pose is not None and self.odom_received is not None:
-            elapsed = now - self.odom_received
-            if (elapsed < 1.0 and (math.dist(new_pose[:2], self.pose[:2]) > .15 + .6*elapsed
-                                  or abs(math.atan2(math.sin(new_pose[2]-self.pose[2]),
-                                                    math.cos(new_pose[2]-self.pose[2]))) > .4 + 2*elapsed)):
-                self.fatal = 'ODOM_JUMP_RESET_REQUIRED'
-                self.odom_received = None
-                return
-        if hasattr(self.nav, 'set_motion_feedback'):
-            twist = message.twist.twist
-            linear = math.hypot(twist.linear.x, twist.linear.y)
-            angular = twist.angular.z
-            if not math.isfinite(linear) or not math.isfinite(angular):
-                self.odom_received = None
-                self.sensor_problem('odom', 'nonfinite measured velocity')
-                return
-            self.nav.set_motion_feedback(linear, angular, now)
-        self.pose = new_pose
-        self.odom_received = now
-        self.sensor_problems['odom'] = ''
+            # Frame/clock resets require explicit reset, never silently move the map.
+            self.fault = str(error)
 
-    def scan_callback(self, message):
-        """Transform laser hits to base_link; missing TF never assumes alignment."""
-        self.scan_received = None
+    def on_scan(self, message):
+        now = time.monotonic()
         try:
-            if not message.header.frame_id:
-                raise ValueError('empty scan frame')
-            if message.header.frame_id == self.base_frame:
-                transform = (0., 0., 0.)
-                angle_sign = 1.
+            stamp = stamp_seconds(message.header.stamp)
+            received = now-self.source_age(stamp)
+            if stamp <= self.last_scan_stamp:
+                raise ValueError('Non-increasing laser timestamp')
+            if message.header.frame_id == self.cfg.base_frame:
+                transform, sign = (0., 0., 0.), 1.
             else:
-                tf = self.tf_buffer.lookup_transform(
-                    self.base_frame, message.header.frame_id, Time.from_msg(message.header.stamp))
-                t, q = tf.transform.translation, tf.transform.rotation
-                norm = math.sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w)
-                if not math.isfinite(norm) or norm < 1e-9:
-                    raise ValueError('invalid laser TF quaternion')
-                x, y, z, w = q.x/norm, q.y/norm, q.z/norm, q.w/norm
-                zz = 1 - 2*(x*x + y*y)
-                if abs(zz) < .995:
-                    raise ValueError('laser scan plane is not horizontal')
-                yaw = math.atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z))
-                transform = (t.x, t.y, yaw)
-                angle_sign = 1. if zz > 0 else -1.
-            scan = process_scan(message.ranges, message.angle_min, message.angle_increment,
-                                message.range_min, message.range_max, transform,
-                                self.cfg.allow_positive_inf, angle_sign=angle_sign)
-        except (TransformException, ValueError) as error:
-            self.sensor_problem('scan', f'TF/geometry: {error}')
-            return
-        first_valid = self.scan is None or not self.scan.healthy
-        self.scan = scan
-        if not scan.healthy:
-            self.sensor_problem('scan', scan.reason)
-            return
-        self.scan_received = time.monotonic()
-        self.sensor_problems['scan'] = ''
-        if first_valid:
-            self.get_logger().info(
-                f'First valid laser scan received: {message.header.frame_id} -> {self.base_frame}.')
-        if self.mode == 'follow' and self.fresh(self.odom_received, self.scan_received):
-            self.follower.observe(scan, self.pose, self.scan_received)
-
-    def fresh(self, received, now):
-        """Check a monotonic receipt timestamp."""
-        return received is not None and 0 <= now - received <= self.cfg.sensor_timeout
-
-    def set_status(self, status):
-        """Publish the reason; log changed faults even while still stopped."""
-        detail = self.last_problem if status == 'SENSOR_STOP' else ''
-        rendered = f'{status} ({detail})' if detail else status
-        self.status_publisher.publish(String(data=rendered))
-        now = time.monotonic()
-        if (status != self.status or
-                (detail != self.last_status_detail and now-self.last_status_log >= 1.)):
-            self.get_logger().info(rendered)
-            self.last_status_detail = detail
-            self.last_status_log = now
-        self.status = status
-
-    def publish(self, v, w):
-        """Send a command and record exactly the sent values."""
-        command = Twist()
-        command.linear.x, command.angular.z = float(v), float(w)
-        self.publisher.publish(command)
-        if self.writer:
-            pose = self.pose or (math.nan, math.nan, math.nan)
-            distance = math.hypot(self.cfg.goal_x-pose[0], self.cfg.goal_y-pose[1])
-            sectors = self.scan.sectors if self.scan else {}
-            self.writer.writerow((time.monotonic()-self.started_at, self.mode, self.status, *pose,
-                                  self.cfg.goal_x, self.cfg.goal_y,
-                                  distance if self.mode == 'goal' else math.nan, v, w,
-                                  *(sectors.get(k, math.nan) for k in
-                                    ('F', 'FL', 'L', 'BL', 'B', 'BR', 'R', 'FR')),
-                                  self.nav.behavior if self.mode != 'follow' else self.follower.state,
-                                  *(self.nav.diagnostics.get(k, math.nan) for k in
-                                    ('obstacle_distance_m', 'wall_entry_goal_distance_m',
-                                     'goal_normal_dot', 'goal_corridor_clear')),
-                                  self.cfg.planner,
-                                  *(self.nav.diagnostics.get(k, math.nan) for k in
-                                    ('field_x', 'field_y', 'repulsion_magnitude', 'tangent_weight',
-                                     'fallback_count', 'fallback_reason', 'phase', 'reason',
-                                  'measured_speed_m_s', 'target_heading_rad',
-                                  'available_travel_m', 'side_switch_count'))))
+                tf = self.tf.lookup_transform(self.cfg.base_frame, message.header.frame_id,
+                                              Time.from_msg(message.header.stamp))
+                transform, sign = laser_transform(tf.transform)
+            pose = self.tracker.pose_at(stamp)
+            self.sequence += 1
+            scan = process_scan(
+                ranges=message.ranges,
+                angle_min=message.angle_min,
+                angle_increment=message.angle_increment,
+                range_min=message.range_min,
+                range_max=message.range_max,
+                config=self.cfg,
+                pose=pose,
+                transform=transform,
+                angle_sign=sign,
+                stamp=stamp,
+                received=received,
+                sequence=self.sequence,
+            )
+            self.scan, self.last_scan_stamp = scan, stamp
+        except (ValueError, TransformException) as error:
+            self.scan = None
+            self.get_logger().warning(str(error), throttle_duration_sec=2.)
 
     def tick(self):
-        """One timer owns normal commands; any missing sensor commands zero."""
-        now = time.monotonic()
-        dt = self.cfg.control_period if self.last_tick is None else now-self.last_tick
-        self.last_tick = now
-        if self.fatal:
-            self.set_status(self.fatal)
-            self.publish(0., 0.)
-            return
-        problems = []
-        for kind, received in (('odom', self.odom_received), ('scan', self.scan_received)):
-            if not self.fresh(received, now):
-                reason = self.sensor_problems[kind]
-                if not reason:
-                    reason = f'no new valid data for >{self.cfg.sensor_timeout:g}s'
-                problems.append(f'{kind}: {reason}')
-        if dt <= 0 or dt > self.cfg.sensor_timeout:
-            problems.append('control loop delayed or invalid interval')
-        if problems:
-            self.last_problem = '; '.join(problems)
-            self.nav.pause()
-            self.follower.previous_v = 0.
-            self.set_status('SENSOR_STOP')
-            self.publish(0., 0.)
-            return
-        if self.mode == 'follow':
-            v, w = self.follower.step(self.pose, self.scan, now, dt)
-            self.set_status(self.follower.state)
-        else:
-            v, w = self.nav.step(self.pose, self.scan, now, dt, self.mode)
-            self.set_status(self.nav.state)
-        self.publish(v, w)
+        started = now = time.monotonic()
+        dt, self.last_tick = now-self.last_tick, now
+        received_plan = take_latest(self.outgoing)
+        if received_plan is not None:
+            self.plan = received_plan
+        state, scan, plan = self.tracker.latest, self.scan, self.plan
+        result = MotionResult(reason='WAITING_FOR_SENSORS')
+        valid = (state is not None and scan is not None and self.tracker.fresh(now)
+                 and 0 <= now-scan.received <= self.cfg.sensor_timeout)
+        if self.fault:
+            result.reason = 'FAULT: '+self.fault
+        elif self.paused:
+            result.reason = 'PAUSED'
+        elif not self.worker.is_alive():
+            result.reason = 'WORKER_STOP: '+str(plan.diagnostics if plan else '')
+        elif valid:
+            if now-self.last_submit >= self.cfg.map_period or self.result.blocked:
+                if put_latest(self.incoming, Work(state, scan, now, self.result.blocked)):
+                    self.last_submit = now
+            result = self.controller.step_plan(state, scan, plan, now, dt)
+        self.result = result
+        self.publish(result.v, result.w)
+        if result.reason != self.last_reason:
+            self.get_logger().info(result.reason)
+            self.last_reason = result.reason
+        if state is not None:
+            pose = compose(plan.transform, state.pose) if plan else state.pose
+            variance = plan.diagnostics.get('pose_variance') if plan else None
+            self.telemetry.record(dict(time=now, x=pose[0], y=pose[1], yaw=pose[2],
+                                       measured_v=state.v, measured_w=state.w,
+                                       command_v=result.v, command_w=result.w,
+                                       mode=plan.target.mode if plan and plan.target else '',
+                                       reason=result.reason, plan_age=now-plan.created if plan else '',
+                                       worker_seconds=plan.diagnostics.get('worker_seconds', '') if plan else '',
+                                       control_seconds=time.monotonic()-started,
+                                       position_sigma=math.sqrt(max(variance[:2])) if variance else '',
+                                       heading_sigma=math.sqrt(variance[2]) if variance else ''))
 
-    def stop_callback(self, request, response):
-        """Latch a software stop until an explicit reset service call."""
-        self.fatal = 'USER_STOP_RESET_REQUIRED'
-        self.publish(0., 0.)
-        response.success, response.message = True, 'Stopped; call lab3/reset to restart.'
+    def publish(self, v=0., w=0.):
+        message = Twist()
+        message.linear.x, message.angular.z = float(v), float(w)
+        self.publisher.publish(message)
+
+    def stop_run(self, request, response):
+        self.paused = True
+        self.publish()
+        self.save_requested.set()
+        response.success, response.message = True, 'Stopped; save queued. Reset starts a new run.'
         return response
 
-    def reset_callback(self, request, response):
-        """Stop, then capture a NEW start pose on the next odometry message."""
-        self.publish(0., 0.)
-        self.origin = self.pose = self.scan = None
-        self.odom_received = self.scan_received = None
-        self.fatal = self.last_problem = ''
-        self.sensor_problems = {'odom': 'waiting for first valid message',
-                                'scan': 'waiting for first valid scan and scan-to-base TF'}
-        self.nav, self.follower = make_navigator(self.cfg), Follower(self.cfg)
-        self.last_tick = None
-        response.success = True
-        response.message = 'Reset; next fresh odometry defines a NEW goal origin / target acquisition.'
+    def save_run(self, request, response):
+        self.save_requested.set()
+        response.success, response.message = True, 'Save queued; completion/errors appear in worker output.'
+        return response
+
+    def reset_run(self, request, response):
+        # Reset is explicit and only accepted while stopped.
+        state = self.tracker.latest
+        if not self.paused or (state and (abs(state.v) > .01 or abs(state.w) > .03)):
+            response.success, response.message = False, 'Call stop and wait until stationary before reset.'
+            return response
+        self.publish()
+        self.stop_worker()
+        self.tracker = StateTracker(self.cfg)
+        self.scan = self.plan = self.fault = None
+        self.last_scan_stamp = self.last_submit = float('-inf')
+        self.start_worker()
+        self.paused = False
+        response.success, response.message = True, 'New run; waiting for fresh sensors.'
         return response
 
     def close(self):
-        """Stop motion on shutdown and close the CSV."""
-        self.timer.cancel()
-        self.publish(0., 0.)
-        if self.log_file:
-            self.log_file.close()
+        self.publish()
+        self.stop_worker()
+        self.telemetry.close()
+        if self.telemetry.error or self.telemetry.dropped:
+            self.get_logger().warning(f'Telemetry: {self.telemetry.error}; dropped={self.telemetry.dropped}')
 
 
 def main(args=None):
-    """Run until interrupted, publishing zero on normal shutdown."""
-    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    rclpy.init(args=args)
     node = None
     try:
-        node = Lab3Controller()
+        node = Lab3Node()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
         if node is not None:
-            if rclpy.ok():
-                node.close()
+            node.close()
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()
