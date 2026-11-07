@@ -1,4 +1,9 @@
-"""Timestamped values shared by the robot adapter, worker and simulator."""
+"""A value can be misused if its frame, timestamp or validity is lost
+while passing between sensing, planning and control.
+
+These records carry that context through the ROS adapter, planning worker and
+simulator.
+"""
 
 from dataclasses import dataclass, field
 import numpy as np
@@ -6,13 +11,17 @@ import numpy as np
 
 @dataclass
 class Scan:
-    """Laser geometry in the robot base frame identified by pose.
+    """A finite stored distance can represent an invalid reading, so
+    distances alone cannot tell collision checks what the laser actually observed.
 
-    The four beam arrays share the same bearing order. known distinguishes
-    usable observations from missing data; hits selects actual obstacles.
-    ranges holds finite lengths even for unknown beams, so a length alone
-    must never be treated as evidence of free space. Re-expressing the geometry
-    changes pose, but the acquisition stamp remains unchanged.
+    angles, ranges, known and hits are matching beam arrays. known identifies usable
+    coverage and hits identifies obstacle returns inside the usable limit. Geometry
+    uses the robot frame located by pose in starting odometry; origin is the laser
+    position in that frame.
+
+    pose initially refers to acquisition and changes if the geometry is re-
+    expressed. stamp remains acquisition time, received is the monotonic freshness
+    reference, and sequence helps avoid repeated map insertion.
     """
 
     angles: np.ndarray
@@ -27,19 +36,35 @@ class Scan:
 
     @property
     def endpoints(self):
-        """Return Nx2 beam endpoints, including placeholders for unknown rays."""
+        """Map insertion needs beam endpoints for both obstacle hits
+        and usable no-return beams.
+
+        Return N [x, y] rows in the scan frame, including placeholders. Callers must
+        use known and hits to distinguish which endpoints carry evidence.
+        """
         directions = np.column_stack((np.cos(self.angles), np.sin(self.angles)))
         return self.origin + self.ranges[:, None] * directions
 
     @property
     def points(self):
-        """Return only observed obstacle-hit points in the scan's base frame."""
+        """Collision checks must not mistake clipped no-return
+        distances or unknown-beam placeholders for actual obstacles.
+
+        Return only endpoints selected by hits. An empty result alone does not
+        establish free space.
+        """
         return self.endpoints[self.hits]
 
 
 @dataclass
 class RobotState:
-    """Continuous starting-odometry pose, signed speeds and reported covariance."""
+    """Stopping prediction needs the robot's measured motion; its
+    requested velocity may not yet have been reached.
+
+    pose is (x, y, yaw) in starting odometry; v and w are signed measured m/s and
+    rad/s. stamp uses sensor time, received uses monotonic time for freshness, and
+    covariance carries reported pose uncertainty.
+    """
 
     pose: tuple
     v: float
@@ -51,7 +76,13 @@ class RobotState:
 
 @dataclass
 class Target:
-    """A point in the map frame; wall side is +1 left, -1 right."""
+    """The same destination needs different steering when approaching a
+    wall, backing out or braking at the final goal.
+
+    The planner supplies point in the map frame; the controller adapter converts it
+    to odometry. mode selects the behavior, reverse permits backward recovery, and
+    wall_side is +1 left or -1 right. score ranks candidate targets.
+    """
 
     point: tuple
     mode: str = 'FIRST_RUN'
@@ -62,6 +93,14 @@ class Target:
 
 @dataclass
 class MotionResult:
+    """Planning needs to know when control could not follow a target,
+    and logs need the reason for a slowdown or stop.
+
+    v and w are commands in m/s and rad/s; reason explains them and blocked requests
+    reconsideration. trajectory stores predicted poses when evaluated. Defaults
+    request zero velocity.
+    """
+
     v: float = 0.0
     w: float = 0.0
     reason: str = 'WAITING'
@@ -71,7 +110,14 @@ class MotionResult:
 
 @dataclass
 class Plan:
-    """Worker output: a target and its exact map-to-odometry transform."""
+    """A map correction made after target selection could send the
+    robot toward the wrong odometry location if target and transform were read
+    separately.
+
+    Keep the map-frame target with transform, which locates starting odometry in the
+    map; control uses its inverse. created uses monotonic time for expiry. status
+    and diagnostics explain the decision.
+    """
 
     target: Target | None
     transform: tuple

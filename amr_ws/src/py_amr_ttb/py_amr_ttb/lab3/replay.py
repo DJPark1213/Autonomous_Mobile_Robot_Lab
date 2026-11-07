@@ -1,4 +1,9 @@
-"""Time-improving route shortcuts, validated corner smoothing and speed anticipation."""
+"""The first successful run may contain exploration loops and slow
+corners that need not be repeated.
+
+Use saved map evidence to verify shortcuts and rounded corners, then anticipate bend
+speeds. Current scan checks still govern actual motion.
+"""
 
 import math
 import numpy as np
@@ -7,6 +12,13 @@ from py_amr_ttb.odom_utils import normalize_angle
 
 
 def route_time(points, config):
+    """The shortest route can still be slow if it requires many sharp
+    turns.
+
+    Estimate seconds from linear distance and angular response limits for
+    comparison. points contains map [x, y] rows. This ranking estimate does not
+    guarantee execution time.
+    """
     points = np.asarray(points)
     if len(points) < 2:
         return 0.
@@ -14,7 +26,8 @@ def route_time(points, config):
     length = np.linalg.norm(delta, axis=1)
     headings = np.arctan2(delta[:, 1], delta[:, 0])
     turns = np.abs((np.diff(headings)+math.pi) % (2*math.pi)-math.pi)
-    # Symmetric acceleration/deceleration estimate; used for comparison, not a guarantee.
+    # Short turns may finish before reaching max angular speed, so assuming
+    # every turn runs at that speed would underestimate their cost.
     turn_time = np.where(turns < config.max_angular**2/config.angular_acceleration,
                          2*np.sqrt(turns/config.angular_acceleration),
                          turns/config.max_angular+config.max_angular/config.angular_acceleration)
@@ -22,7 +35,13 @@ def route_time(points, config):
 
 
 def optimize_route(route, grid, config):
-    """Bounded shortcut passes; original validated segments remain the fallback."""
+    """Following every recorded turn repeats detours, but taking
+    unchecked shortcuts can cross walls or unknown space.
+
+    Try small observed-space repairs for marginal recorded corners, compare bounded
+    shortcut candidates by time, and validate sampled rounding segments. Return map
+    [x, y] rows. Raise ValueError if required fallback segments are not verified.
+    """
     points = [tuple(row[:2]) for row in route]
     if len(points) < 2:
         raise ValueError('Saved route has fewer than two points')
@@ -44,7 +63,8 @@ def optimize_route(route, grid, config):
                     break
         repaired.append(candidate)
     points = repaired
-    # Keep enough spatial samples for narrow corners; cap comparison cost.
+    # Dense duplicate points make shortcut search expensive, but retaining
+    # spatial samples is still necessary around narrow corners.
     reduced = [points[0]]
     for p in points[1:-1]:
         if math.dist(p, reduced[-1]) >= config.route_spacing:
@@ -54,7 +74,8 @@ def optimize_route(route, grid, config):
     result, i = [points[0]], 0
     while i < len(points)-1:
         best, saving = i+1, 0.
-        # Test far and near candidates, up to 40 per anchor.
+        # Long traces must not create an unbounded shortcut search; sample both
+        # near and far destinations within a fixed candidate budget.
         candidates = sorted(set(np.linspace(i+1, len(points)-1, min(40, len(points)-i-1), dtype=int)), reverse=True)
         for j in candidates:
             if not grid.segment_clear(points[i], points[j], margin=config.route_margin):
@@ -70,7 +91,8 @@ def optimize_route(route, grid, config):
             raise ValueError('Recorded route is not verified free in saved map')
         result.append(points[best])
         i = best
-    # Quadratic corner rounding is accepted only after footprint checks on every sample.
+    # Rounding a clear sharp turn can cut its inside corner into a wall.
+    # Validate the rounded chain before replacing the original turn.
     smooth = [result[0]]
     for a, b, c in zip(result, result[1:], result[2:]):
         a, b, c = map(np.asarray, (a, b, c))
@@ -92,7 +114,13 @@ def optimize_route(route, grid, config):
 
 
 def speed_profile(route, config):
-    """Limit corner speed, then propagate braking limits backward from each bend."""
+    """Waiting until a bend or the final waypoint to reduce speed may
+    leave too little distance to brake.
+
+    Set curvature-based m/s limits, then propagate braking constraints backward from
+    bends and a zero-speed endpoint. Return one cap per route point; control may
+    reduce it further.
+    """
     route = np.asarray(route)
     speeds = np.full(len(route), config.max_linear)
     lengths = np.linalg.norm(np.diff(route, axis=0), axis=1)
@@ -104,6 +132,8 @@ def speed_profile(route, config):
             speeds[i] = min(speeds[i], config.max_angular/curvature,
                             math.sqrt(config.lateral_acceleration/curvature))
     speeds[-1] = 0.
+    # Work backward so each earlier cap leaves enough distance to reach the
+    # following speed, including the final stop, under the braking model.
     for i in range(len(route)-2, -1, -1):
         speeds[i] = min(speeds[i], math.sqrt(speeds[i+1]**2+2*config.linear_braking*lengths[i]))
     return speeds

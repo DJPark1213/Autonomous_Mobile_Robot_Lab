@@ -1,11 +1,16 @@
-"""Shared robot settings and independently tunable laboratory configurations."""
+"""Keep robot wiring and tuning choices consistent across each lab's components.
+
+Legacy exercises use LabConfig constants. Lab 3 shares a validated Lab3Config
+instance across sensing, planning, motion and persistence so geometry and limits
+agree throughout a run.
+"""
 
 from dataclasses import dataclass, fields
 import math
 
 
 class LabConfig:
-    """Robot topics, joystick mappings, and controller settings."""
+    """Centralize topics and legacy exercise tuning so controllers use the same robot setup."""
 
     ROBOT_NAMESPACE = '/TTB10'
 
@@ -101,16 +106,26 @@ class LabConfig:
 
 @dataclass
 class Lab3Config:
-    """Competition settings; motion response defaults require robot calibration."""
+    """Keep navigation assumptions aligned from scan acceptance through stopping checks.
 
+    The ROS adapter exposes these fields as parameters; simulation uses the same
+    settings directly. Distances are metres, angles radians and durations seconds;
+    linear/angular speeds and accelerations use the corresponding per-second units.
+    Goal coordinates refer to the learned map's starting frame. Response limits and
+    noise values are tuning assumptions that require calibration, not sensor facts.
+    """
+
+    # Bind sensing and commands to one robot and choose learning versus replay.
     robot_namespace: str = LabConfig.ROBOT_NAMESPACE
     base_frame: str = 'base_link'
     run_mode: str = 'learn'
     run_file: str = '~/amr_lab3_runs/course.npz'
     log_dir: str = '~/amr_lab3_runs'
+    # Completion requires this map location; open space alone is not an exit.
     goal_x: float = 10.0
     goal_y: float = 0.0
     goal_tolerance: float = 0.12
+    # Command limits and calibrated response govern the predicted stopping path.
     max_linear: float = 0.30
     max_angular: float = 1.4
     reverse_speed: float = 0.08
@@ -120,60 +135,81 @@ class Lab3Config:
     angular_braking: float = 2.2
     command_latency: float = 0.10
     lateral_acceleration: float = 0.35
+    # Clearance uses the physical body plus allowance for imperfect geometry.
     robot_radius: float = 0.18
     safety_margin: float = 0.04
+    # Keep command checks frequent while bounding slower map/decision work.
     control_period: float = 0.05
     map_period: float = 0.20
     decision_period: float = 0.50
+    # Stale observations or decisions must expire rather than authorize motion.
     sensor_timeout: float = 0.40
     plan_timeout: float = 1.50
+    # Resolve predicted movement before extending it through braking to rest.
     prediction_step: float = 0.05
     prediction_horizon: float = 0.50
+    # Limit usable sensor distance and reject scans with too much missing data.
     scan_range: float = 6.0
     scan_known_fraction: float = 0.75
+    # Bound how far pose_at may extrapolate to place a laser measurement in time.
     pose_sync_tolerance: float = 0.12
+    # Sample all around the robot while limiting candidate evaluation cost.
     front_sections: int = 4
     rear_sections: int = 4
     heading_samples: int = 9
+    # Look beyond a target, retaining clearance reserve before choosing it.
     scoring_horizon: float = 1.5
     target_distance: float = 1.0
     target_min_distance: float = 0.15
     target_reserve: float = 0.06
     target_reached: float = 0.18
+    # Require a meaningful score improvement to avoid repeatedly switching sides.
     switch_margin: float = 0.10
+    # Balance progress and usable space against turns and repeated failures.
     weight_goal: float = 0.40
     weight_travel: float = 0.30
     weight_clearance: float = 0.10
     weight_heading: float = 0.10
     weight_rotation: float = 0.10
     weight_history: float = 0.35
+    # Steer toward targets; large heading errors require alignment before travel.
     heading_gain: float = 2.0
     rotate_threshold: float = 1.0
+    # Nearby walls can guide motion around corners while preserving separation.
     wall_trigger: float = 0.40
     wall_distance: float = 0.35
     wall_gain: float = 3.0
+    # Detect unproductive motion and choose a reachable earlier point to recover.
     stall_timeout: float = 3.0
     progress_distance: float = 0.15
     backtrack_distance: float = 0.70
+    # Remember failures locally, with decay so a direction can become useful again.
     attempt_radius: float = 0.45
     history_decay: float = 90.0
+    # Recognize loops without mistaking nearby consecutive samples for revisits.
     revisit_window: float = 12.0
     revisit_min_age: float = 8.0
     revisit_radius: float = 0.20
+    # Retain route detail for replay and reserve extra room for shortcut checks.
     route_spacing: float = 0.10
     route_margin: float = 0.10
     route_heading_spacing: float = 0.20
+    # Bound runs that cannot reach the goal, including repeated waiting/recovery.
     max_runtime: float = 300.0
+    # Allocate a finite map in metres; resolution controls gap representation.
     grid_resolution: float = 0.05
     grid_width: float = 24.0
     grid_height: float = 24.0
     grid_origin_x: float = -6.0
     grid_origin_y: float = -12.0
+    # Repeated observations build bounded evidence; unknown starts at zero.
+    # Separate positive/negative thresholds leave uncertain cells unclassified.
     occupied_increment: float = 0.90
     free_increment: float = 0.70
     evidence_limit: float = 4.0
     occupied_threshold: float = 0.60
     free_threshold: float = -0.40
+    # Permit local drift correction only when wall agreement is convincing.
     alignment_enabled: bool = True
     alignment_translation: float = 0.10
     alignment_rotation: float = 0.10
@@ -181,16 +217,23 @@ class Lab3Config:
     alignment_min_score: float = 0.65
     alignment_min_gain: float = 0.08
     alignment_ambiguity_margin: float = 0.04
+    # Weight odometry prediction against scan matches and reject unlikely jumps.
     odom_translation_noise: float = 0.03
     odom_rotation_noise: float = 0.04
     alignment_position_noise: float = 0.04
     alignment_heading_noise: float = 0.04
     innovation_limit: float = 11.34
+    # Replay needs a wider initial match; pocket searches also have a fixed budget.
     replay_start_search: float = 0.30
     local_search_cells: int = 2500
 
     def __post_init__(self):
-        """Validate units, budgets, limits and independent task settings."""
+        """Reject incompatible settings before mapping or motion starts using them.
+
+        Check finite values, frame naming, footprint/clearance relationships and bounded
+        sampling/grid costs. These consistency checks do not calibrate the robot or
+        prove that the configured response model matches hardware.
+        """
         signed = {'goal_x', 'goal_y', 'grid_origin_x', 'grid_origin_y', 'free_threshold'}
         nonnegative = {'switch_margin', 'route_margin', 'command_latency', 'alignment_min_gain',
                        'alignment_ambiguity_margin'}
@@ -233,9 +276,9 @@ class Lab3Config:
 
     @property
     def radius(self):
-        """Inflated robot footprint in metres."""
+        """Give all clearance checks the same body radius plus a safety allowance."""
         return self.robot_radius + self.safety_margin
 
     def topic(self, suffix):
-        """Build every topic from the effective namespace."""
+        """Keep sensing and command topics on the selected robot namespace."""
         return self.robot_namespace + '/' + suffix.lstrip('/')

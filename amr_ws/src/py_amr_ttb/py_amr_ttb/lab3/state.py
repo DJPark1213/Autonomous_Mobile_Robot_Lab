@@ -1,4 +1,9 @@
-"""Continuous odometry, signed motion, and interpolation at laser acquisition time."""
+"""A scan placed at the wrong robot pose can turn a stationary wall
+into a shifted obstacle in the map.
+
+StateTracker matches scan times to starting-frame odometry. PoseEstimator separately
+applies accepted local scan corrections to reduce placement drift.
+"""
 
 from collections import deque
 import math
@@ -10,6 +15,14 @@ from .geometry import between, compose
 
 
 class StateTracker:
+    """A run needs a fixed origin and pose history even when incoming
+    odometry uses a different origin or the laser arrives late.
+
+    Keep starting-frame measurements for interpolation. Reject frame changes,
+    backward timestamps and implausible jumps rather than silently relocating an
+    existing map.
+    """
+
     def __init__(self, config):
         self.cfg = config
         self.origin = None
@@ -21,9 +34,17 @@ class StateTracker:
         return self.samples[-1] if self.samples else None
 
     def update(self, pose, v, w, stamp, received, frame='odom', covariance=()):
+        """An odometry reset or frame jump would otherwise move the
+        robot relative to every previously mapped obstacle and goal.
+
+        Validate continuity and retain a RobotState in the fixed starting frame.
+        pose uses the named odometry frame; measured v and w keep their signs.
+        Invalid input raises ValueError so the adapter can require reset.
+        """
         if not frame or not all(math.isfinite(z) for z in (*pose, v, w, stamp, received)):
             raise ValueError('Invalid odometry or measured motion')
         if self.origin is None:
+            # Preserve this anchor so the goal and past samples keep their meaning.
             self.origin, self.frame = tuple(pose), frame
         if self.frame != frame:
             raise ValueError('Odometry frame changed; reset required')
@@ -41,7 +62,13 @@ class StateTracker:
         return state
 
     def pose_at(self, stamp):
-        """Interpolate bracketed poses; allow only bounded velocity extrapolation."""
+        """The newest odometry pose may be later than a laser
+        measurement, especially while the robot is moving.
+
+        Return the pose at the scan's stamp by interpolation with the short angular
+        difference. Outside the history, extrapolate from the nearest measured
+        speeds only within pose_sync_tolerance; otherwise raise ValueError.
+        """
         if not self.samples:
             raise ValueError('Waiting for odometry')
         items = list(self.samples)
@@ -61,15 +88,24 @@ class StateTracker:
                 normalize_angle(yaw+nearest.w*dt))
 
     def fresh(self, now):
+        """The last pose can still look valid after odometry messages
+        stop arriving.
+
+        Return whether the newest state exists and its monotonic age is within
+        sensor_timeout.
+        """
         return self.latest is not None and odometry_is_fresh(
             now, self.latest.received, self.cfg.sensor_timeout)
 
 
 class PoseEstimator:
-    """Small planar EKF: odometry predicts; an accepted scan match corrects.
+    """Accumulated odometry error can place repeated views of the same
+    wall at different map locations.
 
-    The map is correlated with past poses, so this covariance is a practical local
-    uncertainty estimate, not a full SLAM posterior or a certified error bound.
+    Predict with odometry increments and correct with accepted scan matches.
+    Covariance weights corrections and rejects implausible jumps. Because the map
+    depends on past poses, this is a local uncertainty estimate, not a full SLAM
+    posterior or certified error bound.
     """
 
     def __init__(self, config):
@@ -80,6 +116,13 @@ class PoseEstimator:
         self.covariance = np.diag([.01**2, .01**2, .02**2])
 
     def predict(self, odom_pose, reported=()):
+        """Replacing a corrected map pose with absolute odometry would
+        discard earlier scan corrections.
+
+        Apply only the movement since previous odom_pose and grow uncertainty with
+        that motion. Add valid increases in reported covariance rather than its full
+        cumulative value. Return the predicted map pose.
+        """
         if self.previous is None:
             self.previous = tuple(odom_pose)
             self.pose = tuple(odom_pose)
@@ -95,8 +138,8 @@ class PoseEstimator:
             values = np.asarray(reported, dtype=float)[[0, 7, 35]]
             if np.isfinite(values).all() and np.all(values >= 0):
                 if self.reported is not None:
-                    # Use increases; adding the full cumulative covariance each
-                    # scan would count the same uncertainty repeatedly.
+                    # Adding cumulative covariance each scan would count the
+                    # same uncertainty repeatedly; add only its increases.
                     noise += np.diag(np.maximum(0., values-self.reported))
                 self.reported = values
         self.pose = compose(self.pose, delta)
@@ -105,11 +148,20 @@ class PoseEstimator:
         return self.pose
 
     def correct(self, measured):
+        """Repeated-looking walls can produce a plausible match score
+        at an implausible robot pose.
+
+        Gate the map-frame (x, y, yaw) measurement against predicted uncertainty.
+        Return False without correction if rejected; otherwise apply the Kalman
+        update and return True.
+        """
         residual = np.asarray(measured)-self.pose
         residual[2] = normalize_angle(residual[2])
         variance = np.diag([self.cfg.alignment_position_noise**2]*2+
                            [self.cfg.alignment_heading_noise**2])
         innovation = self.covariance+variance
+        # A strong wall score can still imply an implausible pose jump. Gate the
+        # correction against current uncertainty before moving the map estimate.
         if float(residual@np.linalg.solve(innovation, residual)) > self.cfg.innovation_limit:
             return False
         gain = np.linalg.solve(innovation.T, self.covariance.T).T
@@ -117,10 +169,18 @@ class PoseEstimator:
         corrected[2] = normalize_angle(corrected[2])
         self.pose = tuple(corrected)
         identity = np.eye(3)-gain
+        # Roundoff can damage covariance symmetry and positivity; this update
+        # form is more numerically robust than simply subtracting the gain term.
         self.covariance = identity@self.covariance@identity.T+gain@variance@gain.T
         return True
 
     def initialize(self, odom_pose, map_pose):
+        """Replay starts with new odometry coordinates but must locate
+        the robot in the previously learned map.
+
+        Pair odom_pose with the accepted map_pose and initialize correction
+        uncertainty.
+        """
         self.previous, self.pose = tuple(odom_pose), tuple(map_pose)
         self.covariance = np.diag([self.cfg.alignment_position_noise**2]*2+
                                   [self.cfg.alignment_heading_noise**2])

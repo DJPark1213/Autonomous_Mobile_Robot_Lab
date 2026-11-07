@@ -1,4 +1,9 @@
-"""Directional experience, sampled trajectories and atomic, pickle-free run files."""
+"""Without experience, the robot can repeatedly choose the same failed
+direction and cannot improve a later run from its earlier path.
+
+Retain sampled map poses, local failure penalties and saved map evidence for
+recovery and replay.
+"""
 
 from dataclasses import asdict
 import json
@@ -14,6 +19,13 @@ from .mapping import OccupancyMap
 
 
 class RunMemory:
+    """Recovery needs reachable earlier positions, and replay needs a
+    record of the completed run.
+
+    Route rows are [x, y, yaw, time]; attempt rows are [x, y, heading, count, time].
+    Coordinates use the map frame and live timestamps use monotonic time.
+    """
+
     def __init__(self, config):
         self.cfg = config
         self.route = []
@@ -21,11 +33,22 @@ class RunMemory:
         self.complete = False
 
     def record(self, pose, now):
+        """Recording every stationary tick adds duplicates, but
+        dropping turns would lose important route shape.
+
+        Append a map pose and time only after enough position or heading change.
+        """
         if (not self.route or math.dist(pose[:2], self.route[-1][:2]) >= self.cfg.route_spacing
                 or abs(normalize_angle(pose[2]-self.route[-1][2])) >= self.cfg.route_heading_spacing):
             self.route.append((*map(float, pose), float(now)))
 
     def fail(self, position, heading, now):
+        """A stalled choice can look just as attractive at the next
+        planning step unless its failure is remembered.
+
+        Merge nearby failures with similar headings into a capped count and
+        refreshed timestamp. Other directions remain separate candidates.
+        """
         for entry in self.attempts:
             if (math.dist(position, entry[:2]) < self.cfg.attempt_radius
                     and abs(normalize_angle(heading-entry[2])) < .4):
@@ -35,6 +58,12 @@ class RunMemory:
         self.attempts.append([*map(float, position), float(heading), 1., float(now)])
 
     def penalty(self, position, heading, now):
+        """Recent failures should discourage repetition, but a
+        direction may become useful again after moving away or waiting.
+
+        Return a bounded ranking penalty that fades with distance, heading
+        difference and elapsed time; it does not mark cells blocked.
+        """
         result = 0.
         for x, y, direction, count, stamp in self.attempts:
             space = max(0., 1-math.dist(position, (x, y))/self.cfg.attempt_radius)
@@ -44,7 +73,12 @@ class RunMemory:
         return min(3., result)
 
     def return_target(self, position, grid):
-        """Find a prior reachable point without jumping through a wall."""
+        """A previously visited position may offer a way out, but going
+        directly toward it could cut through a wall.
+
+        Verify observed segments to recent route points within backtrack_distance.
+        Return the farthest of up to 20 qualifying candidates, or None.
+        """
         candidates = []
         for point in reversed(self.route[:-1]):
             distance = math.dist(position, point[:2])
@@ -55,6 +89,13 @@ class RunMemory:
         return max(candidates)[1] if candidates else None
 
     def save(self, path, grid, transform=(0., 0., 0.)):
+        """An interrupted save must not replace a usable learned run
+        with a partially written file.
+
+        Write arrays and JSON metadata to a temporary NPZ, flush, then atomically
+        replace path. Store map layers, route, failures, configuration, transform
+        and completion status without pickle.
+        """
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         metadata = dict(version=1, config=asdict(self.cfg), complete=self.complete,
@@ -75,7 +116,13 @@ class RunMemory:
 
     @classmethod
     def load(cls, path, config):
-        """Reject incompatible dimensions/footprint/goals rather than reinterpret a map."""
+        """Saved clearance and coordinates become misleading if replay
+        uses different map dimensions, footprint or goal settings.
+
+        Reject incompatible settings and malformed arrays; load without pickle. Age
+        failure timestamps because monotonic clocks do not survive restarts. Return
+        (memory, grid); replay establishes its pose alignment separately.
+        """
         with np.load(Path(path).expanduser(), allow_pickle=False) as data:
             metadata = json.loads(str(data['metadata']))
             if metadata['version'] != 1:
@@ -96,7 +143,8 @@ class RunMemory:
                     or attempts.ndim != 2 or attempts.shape[1] != 5 or not np.isfinite(attempts).all()):
                 raise ValueError('Invalid saved route or history')
             memory.route, memory.attempts = route.tolist(), attempts.tolist()
-            # Monotonic timestamps do not survive process/machine restarts.
+            # An old monotonic timestamp is not comparable with the new run's
+            # clock; age saved failures instead of treating them as fresh.
             for attempt in memory.attempts:
                 attempt[4] = -config.history_decay
             memory.complete = bool(metadata['complete'])

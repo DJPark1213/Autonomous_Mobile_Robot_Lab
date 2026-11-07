@@ -1,25 +1,39 @@
-"""Pose conversion into a fixed frame aligned with the robot at task start."""
+"""Make odometry usable as a consistent local reference across robot tasks.
+
+Pose conversion anchors coordinates at task start; angle wrapping and input
+checks prevent representation errors from distorting navigation. These helpers
+change coordinate representation, not the sensor's accumulated drift.
+"""
 
 import math
 
 
 def normalize_angle(angle):
-    """Wrap a heading in radians to [-pi, pi]."""
+    """Keep angular differences on the short turn across the +/-pi boundary.
+
+    Return an equivalent angle in radians in [-pi, pi], so a small crossing of
+    the wrap boundary does not look like an almost-full-circle turn.
+    """
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
 def quaternion_to_yaw(q):
-    """Return planar heading in radians from a unit ROS quaternion."""
+    """Extract the ground-plane heading needed by planar navigation.
+
+    q must be a unit ROS quaternion. Return radians; use read_planar_pose when
+    incoming odometry also needs normalization and validity checks.
+    """
     yaw_sine = 2.0 * (q.w * q.z + q.x * q.y)
     yaw_cosine = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
     return math.atan2(yaw_sine, yaw_cosine)
 
 
 def relative_pose(x, y, yaw, initial_x, initial_y, initial_yaw):
-    """Return (x forward, y left, yaw CCW) in the fixed starting frame.
+    """Anchor a task to its starting location regardless of absolute odometry coordinates.
 
-    Positions are in meters and angles in radians. Capture the initial pose
-    after any external odometry reset and keep it fixed for the entire run.
+    Return (x forward, y left, yaw counterclockwise) in the fixed initial robot
+    frame. Positions use metres and angles radians. Capture the initial pose after
+    any external reset and keep it fixed for the run; later odometry drift remains.
     """
     offset_x = x - initial_x
     offset_y = y - initial_y
@@ -34,7 +48,12 @@ def relative_pose(x, y, yaw, initial_x, initial_y, initial_yaw):
 
 
 def read_planar_pose(message):
-    """Read finite x/y/yaw, normalizing the quaternion; reject invalid poses."""
+    """Reject unusable odometry before it enters pose tracking and control.
+
+    Extract finite x/y and normalize the orientation quaternion before deriving
+    yaw. Return (x, y, yaw), or raise ValueError for invalid data. The incoming
+    ROS message is preserved.
+    """
     position = message.pose.pose.position
     orientation = message.pose.pose.orientation
     quaternion = (orientation.x, orientation.y, orientation.z, orientation.w)
@@ -55,5 +74,9 @@ def read_planar_pose(message):
 
 
 def odometry_is_fresh(now, last_received, timeout):
-    """Check receipt age using monotonic seconds, including missing data."""
+    """Gate motion when odometry is missing, old or has an invalid time relationship.
+
+    now and last_received use monotonic seconds. Return True only for an age from
+    zero through timeout; callers may adjust last_received for acquisition delay.
+    """
     return last_received is not None and 0 <= now - last_received <= timeout

@@ -1,4 +1,9 @@
-"""ROS 2 adapter: fresh sensors and 20 Hz control, with a separate planning process."""
+"""Delayed sensor messages and slow planning must not cause the robot
+to keep moving on obsolete information.
+
+Validate time and frames, synchronize scans with odometry, and publish velocity from
+one control callback while planning runs separately.
+"""
 
 from dataclasses import fields
 import math
@@ -30,7 +35,12 @@ def stamp_seconds(stamp):
 
 
 def laser_transform(transform):
-    """Support horizontal upright or inverted lasers, rejecting tilted scan planes."""
+    """An upside-down or rotated laser changes beam directions; a
+    tilted scan cannot be treated as ground-plane geometry.
+
+    Return ((x, y, yaw), angle_sign) from the laser-to-base transform. Accept
+    upright or inverted horizontal mounting and reject invalid rotation or tilt.
+    """
     q = transform.rotation
     norm = math.hypot(q.x, q.y, q.z, q.w)
     if not math.isfinite(norm) or norm < 1e-12:
@@ -45,6 +55,13 @@ def laser_transform(transform):
 
 
 class Lab3Node(Node):
+    """Independent callbacks can receive inconsistent or stale inputs,
+    so velocity output needs a single place that checks readiness.
+
+    Own input validation, current-scan control, worker communication and explicit
+    stop/save/reset services.
+    """
+
     def __init__(self):
         super().__init__('lab3_controller')
         defaults = Lab3Config()
@@ -78,6 +95,11 @@ class Lab3Node(Node):
         self.get_logger().info(f'Lab 3 {self.cfg.run_mode}; telemetry: {self.telemetry.path}')
 
     def start_worker(self):
+        """A long mapping step must not hold up sensor callbacks or
+        velocity updates.
+
+        Start a separate process with one-item work and result queues.
+        """
         context = mp.get_context('spawn')
         self.incoming, self.outgoing = context.Queue(1), context.Queue(1)
         self.stopping, self.save_requested = context.Event(), context.Event()
@@ -86,6 +108,12 @@ class Lab3Node(Node):
         self.worker.start()
 
     def stop_worker(self):
+        """Shutdown should allow the worker to save, but must not wait
+        forever if it is stuck.
+
+        Request exit, wait for bounded intervals, then terminate if necessary and
+        report that the final save may be incomplete. Close communication queues.
+        """
         self.stopping.set()
         self.worker.join(timeout=3.)
         if self.worker.is_alive():
@@ -97,12 +125,25 @@ class Lab3Node(Node):
             queue.close()
 
     def source_age(self, stamp):
+        """A message that arrived just now may contain a measurement
+        taken too long ago to use.
+
+        Compare stamp with the ROS clock; reject stale data or times beyond the
+        small future tolerance. Return age in seconds for monotonic freshness
+        accounting.
+        """
         age = self.get_clock().now().nanoseconds*1e-9-stamp
         if not -.05 <= age <= self.cfg.sensor_timeout:
             raise ValueError('Sensor acquisition timestamp is stale or in the future')
         return max(0., age)
 
     def on_odom(self, message):
+        """A changed frame, invalid pose or clock reset would
+        invalidate the relationship between the robot and its existing map.
+
+        Check source age and twist frame, then update starting-frame history.
+        Invalid input latches a fault requiring reset.
+        """
         now = time.monotonic()
         try:
             stamp = stamp_seconds(message.header.stamp)
@@ -113,10 +154,18 @@ class Lab3Node(Node):
                                 message.twist.twist.angular.z, stamp, received,
                                 message.header.frame_id, message.pose.covariance)
         except ValueError as error:
-            # Frame/clock resets require explicit reset, never silently move the map.
+            # Silently accepting a frame or clock reset would invalidate the map;
+            # latch a fault until the operator explicitly starts a new run.
             self.fault = str(error)
 
     def on_scan(self, message):
+        """A scan's arrival-time pose and mounting orientation can
+        differ from what its raw beam angles imply.
+
+        Validate acquisition time, obtain the mounting transform and synchronized
+        odometry, then process the readings. Invalid input clears the current scan
+        so control waits.
+        """
         now = time.monotonic()
         try:
             stamp = stamp_seconds(message.header.stamp)
@@ -151,6 +200,13 @@ class Lab3Node(Node):
             self.get_logger().warning(str(error), throttle_duration_sec=2.)
 
     def tick(self):
+        """The robot needs fresh command checks even while a worker is
+        still computing the next target.
+
+        Take the newest plan, verify sensor freshness and run state, submit work
+        without waiting, then publish the controller result. Default to zero when
+        prerequisites fail and enqueue diagnostic telemetry.
+        """
         started = now = time.monotonic()
         dt, self.last_tick = now-self.last_tick, now
         received_plan = take_latest(self.outgoing)
@@ -158,6 +214,7 @@ class Lab3Node(Node):
             self.plan = received_plan
         state, scan, plan = self.tracker.latest, self.scan, self.plan
         result = MotionResult(reason='WAITING_FOR_SENSORS')
+        # Missing prerequisites must not leave the previous motion command active.
         valid = (state is not None and scan is not None and self.tracker.fresh(now)
                  and 0 <= now-scan.received <= self.cfg.sensor_timeout)
         if self.fault:
@@ -195,6 +252,12 @@ class Lab3Node(Node):
         self.publisher.publish(message)
 
     def stop_run(self, request, response):
+        """An operator stop must prevent later ticks from resuming
+        motion while the current run is being saved.
+
+        Latch paused, publish zero velocity and queue saving. The response
+        acknowledges the request, not disk completion; reset starts a new run.
+        """
         self.paused = True
         self.publish()
         self.save_requested.set()
@@ -202,12 +265,22 @@ class Lab3Node(Node):
         return response
 
     def save_run(self, request, response):
+        """Disk persistence can be slow enough to delay ROS callbacks
+        if performed inside the service.
+
+        Queue the worker save request; the service does not confirm completion.
+        """
         self.save_requested.set()
         response.success, response.message = True, 'Save queued; completion/errors appear in worker output.'
         return response
 
     def reset_run(self, request, response):
-        # Reset is explicit and only accepted while stopped.
+        """Changing the odometry origin while moving would invalidate
+        both the saved scan coordinates and the held target.
+
+        Require an explicit pause and near-zero measured motion. Restart worker and
+        odometry tracking, discard old references and wait for fresh inputs.
+        """
         state = self.tracker.latest
         if not self.paused or (state and (abs(state.v) > .01 or abs(state.w) > .03)):
             response.success, response.message = False, 'Call stop and wait until stationary before reset.'
@@ -223,6 +296,12 @@ class Lab3Node(Node):
         return response
 
     def close(self):
+        """Exiting without a final stop request or worker shutdown can
+        leave commands and saved evidence unfinished.
+
+        Publish zero, stop the worker, drain telemetry with a bounded wait and
+        report logging problems.
+        """
         self.publish()
         self.stop_worker()
         self.telemetry.close()
@@ -231,6 +310,12 @@ class Lab3Node(Node):
 
 
 def main(args=None):
+    """Interrupting ROS execution must still request a stop and release
+    the worker and logging resources.
+
+    Run the node with cleanup in finally, including node destruction and ROS
+    shutdown.
+    """
     rclpy.init(args=args)
     node = None
     try:

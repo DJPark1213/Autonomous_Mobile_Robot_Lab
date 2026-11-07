@@ -1,4 +1,9 @@
-"""Mapping/planning process, shared by ROS and deterministic simulation."""
+"""Mapping and disk writes can take longer than a control tick,
+delaying the next velocity decision if run in the same callback.
+
+Use a separate process with bounded latest-work queues. NavigationEngine also runs
+directly in simulation; worker errors produce stop plans.
+"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +20,13 @@ from .types import Plan
 
 @dataclass
 class Work:
+    """Planning needs to relate a blocked command to the sensor state
+    and time used for its next decision.
+
+    Carry state, scan, monotonic now and blocked feedback together. State and scan
+    retain their own acquisition metadata.
+    """
+
     state: object
     scan: object
     now: float
@@ -22,7 +34,12 @@ class Work:
 
 
 def put_latest(queue, value):
-    """Bound memory and latency; replace pending work, never block the controller."""
+    """A backlog would make navigation process increasingly old scenes
+    while the robot continues moving.
+
+    Try a nonblocking enqueue, replacing a pending item if full. Return whether the
+    new value was enqueued; feeder visibility or contention can cause failure.
+    """
     try:
         queue.put_nowait(value)
         return True
@@ -39,6 +56,11 @@ def put_latest(queue, value):
 
 
 def take_latest(queue):
+    """Older queued work or plans can already be obsolete when a
+    consumer gets time to read them.
+
+    Drain currently visible items and return the newest, or None without waiting.
+    """
     result = None
     try:
         while True:
@@ -48,7 +70,20 @@ def take_latest(queue):
 
 
 class NavigationEngine:
+    """Planning, mapping and persistence must agree on one run's frame
+    and history in both ROS and simulation.
+
+    Own their shared lifecycle. Replay loads a completed route and requires starting
+    alignment; learning creates new map evidence and memory.
+    """
+
     def __init__(self, config):
+        """A replay cannot begin from incomplete or unverifiable
+        learned data.
+
+        Load and optimize a completed saved run in replay mode; otherwise prepare a
+        new learning run.
+        """
         self.cfg = config
         self.memory = RunMemory(config)
         self.mapper = Mapper(config)
@@ -65,6 +100,13 @@ class NavigationEngine:
         self.planner = Planner(config, self.memory, route)
 
     def step(self, work):
+        """Replay targets are meaningless before starting alignment,
+        and later targets need an up-to-date map relationship.
+
+        Wait for accepted initial alignment, update mapping at its configured
+        period, then plan with current state and blocked feedback. Return a Plan
+        with timing and uncertainty diagnostics; save once on completion or timeout.
+        """
         started = time.perf_counter()
         if not self.aligned:
             pose, quality = self.mapper.grid.align(work.scan, work.scan.pose, initial=True)
@@ -87,7 +129,11 @@ class NavigationEngine:
         return plan
 
     def save(self):
-        # A replay must never replace the learned course with its shorter trajectory.
+        """Saving a replay over the learned course would destroy the
+        original evidence needed for future runs.
+
+        Use a separate .replay.npz destination in replay mode.
+        """
         destination = Path(self.cfg.run_file).expanduser()
         if self.cfg.run_mode == 'replay':
             destination = destination.with_name(destination.stem+'.replay.npz')
@@ -95,7 +141,13 @@ class NavigationEngine:
 
 
 def worker_main(config, incoming, outgoing, stopping, save_requested):
-    """Fail closed: exceptions become a stop plan visible to the ROS adapter."""
+    """A planning exception must not silently leave control following
+    its last successful target.
+
+    Consume fresh work, process save requests and publish plans until stopped. Turn
+    exceptions into ERROR plans without targets, and attempt a final save when
+    experience exists.
+    """
     engine = None
     try:
         engine = NavigationEngine(config)

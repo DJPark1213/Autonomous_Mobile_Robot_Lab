@@ -1,4 +1,8 @@
-"""Align near the original start and follow a shortened, verified route."""
+"""Use a completed learned course to attempt a more efficient second run.
+
+The controller verifies saved-route clearance and requires alignment near the
+original start before following replay targets with current scan checks.
+"""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -7,6 +11,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    """Launch replay against the chosen learned file and robot frame configuration."""
     return LaunchDescription([
         DeclareLaunchArgument('robot_namespace', default_value='/TTB10'),
         DeclareLaunchArgument('run_file', default_value='~/amr_lab3_runs/course.npz'),

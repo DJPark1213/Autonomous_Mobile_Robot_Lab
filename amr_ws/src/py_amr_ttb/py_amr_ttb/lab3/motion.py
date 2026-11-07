@@ -1,4 +1,9 @@
-"""Continuous motion with acceleration-aware prediction and stopping sweeps."""
+"""The robot keeps moving during command delay and braking, so a clear
+next position alone does not make a command acceptable.
+
+Predict the stopping path from measured speeds and check it against the current scan
+before issuing motion toward a target.
+"""
 
 import math
 from dataclasses import replace
@@ -10,11 +15,12 @@ from .types import MotionResult
 
 
 def approach(current, desired, acceleration, braking, dt):
-    """Advance a signed speed for dt seconds within acceleration/braking limits.
+    """Assuming an instant speed change would underestimate travel
+    while braking or reversing.
 
-    Use metres/second and metres/second squared for translation, or the matching
-    angular units for rotation. A reversal brakes to zero before accelerating
-    in the opposite direction, even if this step could cross zero.
+    Advance current toward desired over dt using acceleration or braking limits.
+    Units are m/s and m/s squared, or rad/s and rad/s squared. Reversal reaches zero
+    before accelerating the other way. Return the next signed speed.
     """
     reversing = current * desired < 0
     slowing_down = abs(desired) < abs(current)
@@ -29,11 +35,13 @@ def approach(current, desired, acceleration, braking, dt):
 
 
 def rollout(state, v_command, w_command, config, age=0.0):
-    """Predict starting-odometry poses through command delay, motion, and a stop.
+    """A robot can avoid contact during a command yet collide afterward
+    because it has no room to stop.
 
-    v_command is m/s, w_command is rad/s, and age is extra latency in seconds.
-    Prediction begins with measured speeds, preserving residual motion during
-    braking or a change of turn direction. The first returned pose is state.pose.
+    Return starting-odometry poses through latency, the command horizon and braking
+    to rest, beginning at state.pose and its measured speeds. v_command is m/s,
+    w_command is rad/s, and age adds latency in seconds. Accuracy depends on
+    configured response limits.
     """
     dt = config.prediction_step
     latency = config.command_latency + max(0.0, age)
@@ -46,9 +54,9 @@ def rollout(state, v_command, w_command, config, age=0.0):
     linear_speed, angular_speed = state.v, state.w
     poses = [(x, y, yaw)]
     for elapsed in np.arange(dt, prediction_end + dt / 2, dt):
-        # Until latency expires, continue at the measured speeds.
+        # A new command cannot change motion before its communication/response delay.
         if elapsed > latency:
-            # Apply the command for the horizon, then predict braking to rest.
+            # The path must leave braking room after the command horizon ends.
             if elapsed <= command_end:
                 target_linear, target_angular = v_command, w_command
             else:
@@ -71,17 +79,32 @@ def rollout(state, v_command, w_command, config, age=0.0):
 
 
 class MotionController:
+    """A planner's target can remain useful even when new obstacles
+    require slowing, turning or stopping before reaching it.
+
+    Choose velocities from current sensing and measured motion, with a stopping-
+    sweep check for each candidate.
+    """
+
     def __init__(self, config):
         self.cfg = config
 
     def safe(self, state, scan, v, w, now):
-        """Check a command's full stopping sweep against the acquisition-frame scan."""
+        """Obstacles can lie between predicted positions or along the
+        later braking path, not just at a command's endpoint.
+
+        Return (is_clear, trajectory). Predict through a complete stop, convert
+        positions into the scan frame, and use enlarged midpoint circles to cover
+        each sampled segment. Clearance depends on scan, pose and response-model
+        accuracy.
+        """
         scan_age = max(0.0, now - scan.received)
         trajectory = rollout(state, v, w, self.cfg, scan_age)
         odometry_positions = np.asarray(trajectory)[:, :2]
         scan_frame_positions = inverse_points(odometry_positions, scan.pose)
-        # Cover each segment with its midpoint and half its actual length. A fixed
-        # speed-based pad would make a stationary robot unable to retreat near walls.
+        # Endpoint checks can skip obstacles between samples. A midpoint circle
+        # enlarged by half the segment length covers the intervening body motion
+        # without adding needless travel padding when the robot is stationary.
         segment_midpoints = (scan_frame_positions[:-1] + scan_frame_positions[1:]) / 2
         segment_lengths = np.linalg.norm(np.diff(scan_frame_positions, axis=0), axis=1)
         swept_radii = self.cfg.radius + segment_lengths / 2
@@ -89,7 +112,12 @@ class MotionController:
         return is_clear, trajectory
 
     def step_plan(self, state, scan, plan, now, dt):
-        """Reject expired decisions and use the transform carried with the target."""
+        """An old decision or a target paired with the wrong map
+        correction could steer toward an obsolete location.
+
+        Reject missing or expired plans with zero velocity. Use the plan's own
+        transform to express its target in starting odometry before calling step.
+        """
         if plan is None or not 0 <= now-plan.created <= self.cfg.plan_timeout:
             return MotionResult(reason='WAITING_FOR_FRESH_PLAN')
         if plan.target is None:
@@ -98,6 +126,14 @@ class MotionController:
         return self.step(state, scan, target, now, dt, plan.diagnostics.get('speed_cap'))
 
     def step(self, state, scan, target, now, dt, speed_cap=None):
+        """Even a reachable target may require a slower approach,
+        alignment first, or a stop under current sensing and motion.
+
+        Given an odometry-frame target, limit speed for heading, turns, route bends
+        and arrival; try bounded candidate speeds with stopping-sweep checks. If
+        travel fails, try alignment while nearly stopped, then request a stop and
+        report blocked. Return MotionResult. Stale inputs also request a stop.
+        """
         c = self.cfg
         if (not 0 < dt <= c.sensor_timeout or not 0 <= now-state.received <= c.sensor_timeout
                 or not 0 <= now-scan.received <= c.sensor_timeout):
@@ -112,7 +148,8 @@ class MotionController:
         if target.reverse:
             heading = normalize_angle(heading-math.pi)
         if target.mode == 'FOLLOW_WALL' and len(scan.points):
-            # Transform current scan hits into the current robot frame.
+            # Wall steering needs distances from the robot now, even when it has
+            # moved since these hits were acquired.
             points = inverse_points(transform_points(scan.points, scan.pose), state.pose)
             side = points[:, 1]*target.wall_side > 0
             if side.any():
@@ -129,7 +166,8 @@ class MotionController:
         reasons.append((top*max(0., math.cos(heading)), 'HEADING'))
         if abs(desired_w) > .05:
             reasons.append((c.lateral_acceleration/abs(desired_w), 'TURN'))
-        # Arrival braking is for the final goal, not each intermediate target.
+        # Braking at every intermediate target would turn continuous travel into
+        # stop-and-go motion; reserve arrival braking for the final goal.
         if target.mode == 'FINAL':
             reasons.append((math.sqrt(2*c.linear_braking*max(0., distance-c.goal_tolerance)), 'ARRIVAL'))
         desired, reason = min(reasons, key=lambda pair: pair[0])
@@ -137,6 +175,8 @@ class MotionController:
             desired = -min(desired, c.reverse_speed)
             reason = 'REVERSE'
         if abs(heading) >= c.rotate_threshold:
+            # Brake translation before a large turn so alignment does not sweep
+            # the moving body sideways into an obstacle.
             desired, reason = 0., 'ALIGN'
             if abs(state.v) > .025:
                 desired_w = 0.
@@ -145,13 +185,15 @@ class MotionController:
         w = approach(state.w, desired_w, c.angular_acceleration, c.angular_braking, dt)
         v = float(np.clip(v, -c.reverse_speed, c.max_linear))
         w = float(np.clip(w, -c.max_angular, c.max_angular))
-        # Bounded local candidates; all use the measured current state.
+        # Try slower commands when full speed cannot stop within observed room.
+        # Every trial starts from measured motion, not the reduced command speed.
         for fraction in (1., .75, .5, .25):
             trial = v*fraction
             safe, trajectory = self.safe(state, scan, trial, w, now)
             if safe and abs(trial) > .004:
                 return MotionResult(trial, w, reason if fraction == 1 else 'CLEARANCE', False, trajectory)
-        # A stopped robot may align; a moving one first receives a braking command.
+        # Attempting alignment while still translating could sweep the body into
+        # a nearby obstacle, so moving robots receive a stop request first.
         if abs(state.v) < .025:
             safe, trajectory = self.safe(state, scan, 0., w, now)
             if safe and abs(w) > .005:

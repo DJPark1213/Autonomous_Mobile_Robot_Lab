@@ -1,4 +1,9 @@
-"""Plot Lab 3 measured and commanded motion from hardware or simulation CSV."""
+"""Requested velocities alone cannot show whether the robot followed
+them or where it went.
+
+Plot recorded trajectory and measured versus commanded linear/angular speed from
+hardware or simulation CSV.
+"""
 
 import argparse
 from pathlib import Path
@@ -6,6 +11,12 @@ import numpy as np
 
 
 def main(args=None):
+    """A saved run needs a view that exposes path deviations and speed-
+    response differences after execution.
+
+    Read command-line CSV and optional --output paths. Save a diagnostic PNG without
+    requiring a display, with time relative to the first sample.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('csv', type=Path)
     parser.add_argument('--output', type=Path)

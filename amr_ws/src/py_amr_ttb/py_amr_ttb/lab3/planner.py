@@ -1,4 +1,10 @@
-"""One owner for section scoring, wall following, replay targets and recovery."""
+"""Always pointing at the goal can trap the robot behind walls, while
+changing direction at every scan can cause oscillation.
+
+Balance observed travel and goal progress with turning and failure history. Hold
+useful targets, recover when stalled, and follow a verified saved route when
+available.
+"""
 
 import math
 import numpy as np
@@ -10,6 +16,13 @@ from .types import Target, Plan
 
 
 class Planner:
+    """Exploration, wall following, replay and backtracking need one
+    decision owner so they do not issue competing targets.
+
+    Targets use map coordinates; candidate clearance uses the current robot frame.
+    Motion control independently checks commands against current sensing.
+    """
+
     def __init__(self, config, memory, replay_route=None):
         self.cfg, self.memory = config, memory
         self.target = None
@@ -24,11 +37,25 @@ class Planner:
         self.diagnostics = {}
 
     def sections(self):
+        """An escape from a blocked forward path may lie beside or
+        behind the robot.
+
+        Return angular intervals covering front and rear. Rear bounds can exceed pi;
+        candidate angles are normalized before evaluation.
+        """
         front = np.linspace(-math.pi/2, math.pi/2, self.cfg.front_sections+1)
         rear = np.linspace(math.pi/2, 3*math.pi/2, self.cfg.rear_sections+1)
         return list(zip(front[:-1], front[1:]))+list(zip(rear[:-1], rear[1:]))
 
     def evaluate(self, heading, scan, pose, state, grid, now):
+        """A direction toward the goal is useless if the robot cannot
+        fit along it or it repeats a recent failed attempt.
+
+        For a robot-relative heading and scan, require enough observed travel, then
+        rank a map target by progress, room, clearance, turning and failure history.
+        Return (Target, available travel, heading), or None. The score ranks
+        choices; it is not a probability.
+        """
         c = self.cfg
         room = observed_travel(scan, heading, c.radius, c.scoring_horizon,
                                step=max(.05, c.grid_resolution))
@@ -52,7 +79,13 @@ class Planner:
         return Target(tuple(point), score=float(score)), room, heading
 
     def replay_target(self, pose, scan, grid):
-        """Follow a monotone route index, with safe line-of-sight lookahead."""
+        """A distant saved waypoint can tempt the robot to cut across a
+        wall or an unseen corner.
+
+        Advance the route index monotonically through verified map segments,
+        returning a map Target or None. Attach a bend-speed cap for control, whose
+        current scan checks still take precedence.
+        """
         if self.route is None:
             return None
         while self.route_index < len(self.route)-1 and math.dist(pose[:2], self.route[self.route_index]) < self.cfg.target_reached:
@@ -69,11 +102,21 @@ class Planner:
             return None
         self.route_index = max(self.route_index, selected)
         point = tuple(self.route[selected])
-        # Current LiDAR still overrides the saved route in the motion controller.
+        # A saved route may now be obstructed; its speed cap cannot override
+        # current LiDAR checks in the motion controller.
         self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
     def step(self, state, scan, mapper, now, blocked=False):
+        """A locally attractive direction can stop making progress or
+        lead back into the same failed area.
+
+        Track progress, completion and timeout; retain useful targets and committed
+        recovery. On stalls, revisits or observed caps, seek a verified return
+        point. Otherwise use replay or scored section candidates, with a switching
+        margin to limit oscillation. Return a Plan carrying its matching map
+        transform.
+        """
         c, grid = self.cfg, mapper.grid
         pose = compose(mapper.transform, state.pose)
         local_scan = scan_at_pose(scan, state.pose)
@@ -90,6 +133,7 @@ class Planner:
             return Plan(None, mapper.transform, now, grid.revision, 'TIME_LIMIT')
         near = self.target is None or math.dist(pose[:2], self.target.point) < c.target_reached
         if self.target and self.target.mode == 'BACKTRACK' and not near and not blocked:
+            # Reconsidering too soon could send recovery straight back into the failed area.
             return Plan(self.target, mapper.transform, now, grid.revision)
         if distance <= c.target_distance:
             goal_heading = normalize_angle(math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2])
@@ -97,6 +141,7 @@ class Planner:
                 self.target = Target((c.goal_x, c.goal_y), 'FINAL')
                 return Plan(self.target, mapper.transform, now, grid.revision)
         if math.dist(pose[:2], self.anchor) >= c.progress_distance:
+            # Tiny pose changes should not keep a stuck robot's progress timer alive.
             self.anchor, self.progress_at = pose[:2], now
         self.recent.append((now, *pose[:2]))
         self.recent = [entry for entry in self.recent if now-entry[0] <= c.revisit_window]
@@ -107,6 +152,7 @@ class Planner:
         capped = grid.closed_ahead(pose[:2], goal_angle)
         stalled = now-self.progress_at >= c.stall_timeout or revisited or capped
         if stalled:
+            # Remember this failed direction so the next decision does not repeat it.
             direction = (math.atan2(self.target.point[1]-pose[1], self.target.point[0]-pose[0])
                          if self.target else pose[2])
             self.memory.fail(pose[:2], direction, now)
@@ -114,7 +160,8 @@ class Planner:
             previous = self.memory.return_target(pose[:2], grid)
             if previous is not None:
                 angle = normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])
-                # Reverse is only a recovery action and is checked by the motion sweep.
+                # A return point far behind may be reached by backing out; the
+                # motion sweep must still verify rear clearance.
                 self.target = Target(previous, 'BACKTRACK', reverse=abs(angle) > 2.2)
                 self.memory.fail(previous, goal_angle, now)
                 self.recent.clear()
@@ -122,6 +169,7 @@ class Planner:
                 return Plan(self.target, mapper.transform, now, grid.revision)
         near = self.target is None or math.dist(pose[:2], self.target.point) < c.target_reached
         if not blocked and not near and not stalled and now-self.last_decision < c.decision_period:
+            # A usable held target avoids steering changes at every sensor update.
             return Plan(self.target, mapper.transform, now, grid.revision, diagnostics=self.diagnostics)
         self.last_decision = now
         self.diagnostics = {}
@@ -130,7 +178,7 @@ class Planner:
             if target is not None:
                 self.target = target
                 return Plan(target, mapper.transform, now, grid.revision, diagnostics=self.diagnostics)
-        # Exact goal direction competes with sampled directions to avoid lattice bias.
+        # Coarse angular samples may miss a clear direct line to the goal.
         goal_heading = normalize_angle(math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2])
         options = []
         for lower, upper in self.sections():
@@ -152,6 +200,8 @@ class Planner:
             return Plan(self.target, mapper.transform, now, grid.revision, 'NO_LOCAL_ROUTE')
         best, room, heading = max(options, key=lambda item: item[0].score)
         if self.target and not near and not blocked and not stalled:
+            # Nearly equal scores can alternate between scans and cause steering
+            # oscillation; require a margin before abandoning a usable target.
             old_heading = normalize_angle(math.atan2(self.target.point[1]-pose[1], self.target.point[0]-pose[0])-pose[2])
             old = self.evaluate(old_heading, local_scan, pose, state, grid, now)
             if (old and old[1] >= math.dist(pose[:2], self.target.point)+c.target_reserve

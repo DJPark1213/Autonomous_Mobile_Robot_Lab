@@ -1,4 +1,9 @@
-"""Bounded occupancy evidence, geometry queries and conservative local alignment."""
+"""One scan cannot describe previously visited corridors or distinguish
+an unexplored region from a known dead end.
+
+Accumulate observed free/occupied evidence for route queries and use local scan
+matching to improve placement before insertion.
+"""
 
 from collections import deque
 import math
@@ -9,7 +14,12 @@ from .state import PoseEstimator
 
 
 def dilate(mask, cells):
-    """Circular binary expansion without an additional runtime dependency."""
+    """A route centerline can miss an occupied cell while the robot's
+    side still touches it.
+
+    Expand a Boolean mask by circular integer offsets of radius cells. Return a
+    copy. Alignment also uses this helper to tolerate nearby wall cells.
+    """
     result = mask.copy()
     height, width = mask.shape
     limit = math.ceil(cells)
@@ -24,6 +34,13 @@ def dilate(mask, cells):
 
 
 class OccupancyMap:
+    """A cell with no obstacle evidence may simply never have been
+    observed.
+
+    Store observation flags separately from bounded free/occupied evidence.
+    Positions use map metres, cells are (x, y), and arrays use [y, x].
+    """
+
     def __init__(self, config):
         self.cfg = config
         self.resolution = config.grid_resolution
@@ -38,17 +55,41 @@ class OccupancyMap:
         self._layers = None
 
     def cell(self, point):
+        """Measured positions use metres while map evidence is
+        addressed by integer array indices.
+
+        Return the containing (x, y) cell for a map point. Check inside before array
+        access.
+        """
         return tuple(np.floor((np.asarray(point)-self.origin)/self.resolution).astype(int))
 
     def point(self, cell):
+        """A selected grid cell needs a physical location before it can
+        be used in geometric calculations.
+
+        Return its center in map metres.
+        """
         return tuple(self.origin+(np.asarray(cell)+.5)*self.resolution)
 
     def inside(self, cell):
+        """Rays and route queries can extend beyond the allocated map,
+        where array indexing would fail or wrap incorrectly.
+
+        Return whether an (x, y) cell lies within the grid.
+        """
         x, y = cell
         return 0 <= x < self.evidence.shape[1] and 0 <= y < self.evidence.shape[0]
 
     def integrate(self, scan, map_pose):
-        """Update each cell once per scan, with hit evidence taking precedence."""
+        """Reusing a scan or counting every crossing beam separately
+        would exaggerate evidence and could erase a real hit with free-space
+        updates.
+
+        Update each touched cell once per new scan, with hits taking precedence.
+        Only known beams contribute. map_pose places the scan frame in the map.
+        Return False for a duplicate; otherwise invalidate cached layers and return
+        True.
+        """
         token = (scan.sequence, scan.stamp)
         if token == self.last_scan:
             return False
@@ -58,6 +99,7 @@ class OccupancyMap:
             raise ValueError('Robot left configured map bounds')
         endpoints = transform_points(scan.endpoints, map_pose)
         free, hits = set(), set()
+        # Unknown beams have placeholder lengths; tracing them would invent free space.
         for i in np.flatnonzero(scan.known):
             end = self.cell(endpoints[i])
             for cell in grid_line(start, end):
@@ -81,9 +123,17 @@ class OccupancyMap:
         return True
 
     def layers(self):
+        """Repeated route queries need robot-width clearance, and
+        uncertain cells must not be mistaken for free space.
+
+        Return cached (blocked, free) masks. Inflate occupied cells by the footprint
+        plus half a cell diagonal. free also requires observed, sufficiently
+        negative evidence; some cells belong to neither mask.
+        """
         if self._layers is None:
             occupied = self.evidence >= self.cfg.occupied_threshold
-            # Include half-cell diagonal to protect against grid discretization.
+            # An obstacle can lie at a cell corner rather than its center.
+            # Half a cell diagonal covers that extra distance during inflation.
             n = (self.cfg.radius+self.resolution/math.sqrt(2))/self.resolution
             blocked = dilate(occupied, n)
             free = self.observed & (self.evidence <= self.cfg.free_threshold) & ~blocked
@@ -91,7 +141,15 @@ class OccupancyMap:
         return self._layers
 
     def segment_clear(self, a, b, require_observed=True, margin=0.):
-        """Require the full footprint to be observed for saved-route shortcuts."""
+        """Two reachable endpoints do not prove that the straight path
+        between them avoids walls or stays inside observed space.
+
+        Check a and b in map metres along their raster line. Always reject centers
+        in inflated occupied cells or outside the grid. With require_observed=True,
+        require free evidence across the footprint plus margin. False returns reject
+        the segment; skipping the coverage check means True no longer establishes
+        that it was seen.
+        """
         blocked, free = self.layers()
         cells = list(grid_line(self.cell(a), self.cell(b)))
         r = math.ceil((self.cfg.radius+margin)/self.resolution)
@@ -101,7 +159,7 @@ class OccupancyMap:
             if require_observed:
                 if x-r < 0 or y-r < 0 or x+r >= free.shape[1] or y+r >= free.shape[0]:
                     return False
-                # Observation of body perimeter is necessary, not just centerline.
+                # A known centerline can still put the robot's side in unknown cells.
                 for dy in range(-r, r+1):
                     span = int(math.sqrt(max(0, r*r-dy*dy)))
                     region = self.observed[y+dy, x-span:x+span+1]
@@ -111,10 +169,13 @@ class OccupancyMap:
         return True
 
     def closed_ahead(self, position, heading):
-        """Evidence-only capped-pocket test with an observed wall-to-wall gate.
+        """A direction may offer nearby free space but lead into an
+        observed capped pocket that cannot continue toward the goal.
 
-        A bounded search, unknown boundary, or missing gate returns False (candidate).
-        False does not mean open or guarantee any path onward.
+        Find a wall-to-wall gate and flood-fill the free region beyond it using map
+        position and heading. Return True only when a qualifying pocket is
+        exhausted. Unknown boundaries, missing gates or the search budget return
+        False, meaning unresolved rather than proven open.
         """
         blocked, free = self.layers()
         forward = np.array([math.cos(heading), math.sin(heading)])
@@ -137,6 +198,8 @@ class OccupancyMap:
                 return False
             anchors.append(anchor)
         gate = set(grid_line(*anchors))
+        # Temporarily close the entrance so flood fill tests only the region
+        # ahead; otherwise it could escape backward into already explored space.
         seed = self.cell(entrance+.15*forward)
         if not self.inside(seed) or not free[seed[1], seed[0]] or seed in gate:
             return False
@@ -154,13 +217,21 @@ class OccupancyMap:
                 if blocked[cy, cx]:
                     continue
                 if not free[cy, cx]:
+                    # Lack of observation cannot prove that a pocket is sealed.
                     return False
                 visited.add(cell)
                 queue.append(cell)
         return len(visited) >= 4
 
     def align(self, scan, predicted, initial=False):
-        """Bounded endpoint matching; reject weak or spatially ambiguous matches."""
+        """Odometry drift can shift new scan hits away from walls
+        already in the map.
+
+        Search near predicted for better wall agreement, rejecting weak or ambiguous
+        matches. initial permits a wider replay-start search; later matches must
+        also improve on predicted. Return (pose, diagnostics), keeping predicted
+        when rejected. This cannot recover arbitrary drift.
+        """
         points = scan.points
         occupied = self.evidence >= self.cfg.occupied_threshold
         if len(points) < self.cfg.alignment_min_hits or occupied.sum() < self.cfg.alignment_min_hits:
@@ -169,6 +240,12 @@ class OccupancyMap:
         close = dilate(occupied, 1)
 
         def score(pose):
+            """A candidate pose must not look better merely because it
+            moves mismatched hits outside the map.
+
+            Divide wall-agreement evidence by the full sampled hit count, including
+            out-of-bounds hits in that denominator.
+            """
             xy = np.floor((transform_points(points, pose)-self.origin)/self.resolution).astype(int)
             valid = ((xy[:, 0] >= 0) & (xy[:, 1] >= 0)
                      & (xy[:, 0] < occupied.shape[1]) & (xy[:, 1] < occupied.shape[0]))
@@ -188,7 +265,8 @@ class OccupancyMap:
         distant = [s for s, p in candidates if math.dist(p[:2], best[:2]) >= max(.09, span*.8)
                    or abs(p[2]-best[2]) >= .09]
         gap = best_score-max(distant, default=0.)
-        # Startup must establish a convincing match even if no correction is needed.
+        # Repeated-looking walls can fit several poses; reject ambiguous matches.
+        # Startup needs evidence of a match even if its best pose equals predicted.
         accepted = best_score >= self.cfg.alignment_min_score and gap >= self.cfg.alignment_ambiguity_margin
         if not initial:
             accepted &= best_score-baseline >= self.cfg.alignment_min_gain
@@ -198,7 +276,12 @@ class OccupancyMap:
 
 
 class Mapper:
-    """Maintain an online map with gated local pose corrections before insertion."""
+    """Inserting a scan before correcting its pose can duplicate or
+    smear mapped walls.
+
+    Predict, gate local correction, then insert evidence. transform locates starting
+    odometry in the map and accompanies planner targets.
+    """
 
     def __init__(self, config, grid=None):
         self.cfg = config
@@ -208,6 +291,13 @@ class Mapper:
         self.estimator = PoseEstimator(config)
 
     def update(self, scan, covariance=()):
+        """The new scan and the live robot pose need a consistent map
+        relationship after any accepted correction.
+
+        Predict from odometry, optionally correct from scan matching, update
+        transform, and integrate once. Return the scan's map pose. Duplicate scans
+        reuse the current transform without adding evidence.
+        """
         if self.grid.last_scan == (scan.sequence, scan.stamp):
             return compose(self.transform, scan.pose)
         predicted = self.estimator.predict(scan.pose, covariance)
@@ -220,7 +310,8 @@ class Mapper:
                 if not accepted:
                     self.alignment['reason'] = 'innovation_rejected'
                 corrected = self.estimator.pose
-        # corrected = transform * scan.pose; solve for transform.
+        # Live odometry and targets still need to agree after this scan is
+        # corrected: solve corrected = transform * scan.pose for transform.
         self.transform = compose(corrected, between(scan.pose, (0., 0., 0.)))
         self.grid.integrate(scan, corrected)
         return corrected

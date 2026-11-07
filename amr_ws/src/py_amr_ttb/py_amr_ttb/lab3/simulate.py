@@ -1,4 +1,10 @@
-"""ROS-free regression simulator with ray-cast LiDAR and a separate robot plant."""
+"""Navigation changes need repeatable checks before hardware runs,
+including whether commanded motion actually reaches the goal without contact.
+
+Feed ray-cast scans into production navigation and use an independent finite-
+response plant. Report completion, clearance and timing. This simplified model omits
+drift, noise and moving obstacles.
+"""
 
 import argparse
 from collections import Counter
@@ -24,13 +30,18 @@ def rectangle(x0, y0, x1, y1):
 
 
 def course(name):
+    """Straight travel alone does not exercise obstacle avoidance,
+    capped-pocket recovery or turning around corners.
+
+    Return repeatable wall segments and a goal in metres for the selected scenario.
+    """
     boundary = rectangle(-1., -2., 5., 2.)
     if name == 'straight':
         return boundary, (3., 0.)
     if name == 'obstacle':
         return boundary+rectangle(1., -.45, 1.35, .45), (3., 0.)
     if name == 'pocket':
-        # A visible capped corridor ahead, with a way around its sides.
+        # This layout tests leaving a tempting dead end to find a route around it.
         return boundary+[((.65, -.6), (2., -.6)), ((2., -.6), (2., .6)),
                          ((2., .6), (.65, .6))], (3.4, 0.)
     if name == 'corner':
@@ -39,6 +50,13 @@ def course(name):
 
 
 def raycast(walls, pose, count=360, maximum=6.):
+    """The navigation pipeline needs sensor-like readings even when no
+    physical LiDAR is connected.
+
+    Return nearest wall distances for count evenly spaced beams starting at -pi
+    relative to pose heading. No valid hit within maximum metres returns positive
+    infinity.
+    """
     angles = np.linspace(-math.pi, math.pi, count, endpoint=False)+pose[2]
     directions = np.column_stack((np.cos(angles), np.sin(angles)))
     segments = np.asarray(walls, dtype=float)
@@ -54,6 +72,12 @@ def raycast(walls, pose, count=360, maximum=6.):
 
 
 def wall_distance(walls, position):
+    """A simulated collision must be detectable even if the
+    controller's sampled laser beams miss it.
+
+    Return the shortest distance from position to any ground-truth wall segment, for
+    comparison with the physical robot radius.
+    """
     walls = np.asarray(walls)
     start, delta = walls[:, 0], walls[:, 1]-walls[:, 0]
     alpha = np.clip(np.sum((np.asarray(position)-start)*delta, axis=1)/np.sum(delta*delta, axis=1), 0, 1)
@@ -61,7 +85,12 @@ def wall_distance(walls, position):
 
 
 def plant(pose, v, w, command, dt):
-    """Independent response: slower acceleration and finite braking, 5 ms substeps."""
+    """Testing with instantaneous command response would hide failures
+    caused by acceleration and braking delay.
+
+    Use independent response constants and ten substeps per dt, returning pose and
+    measured v, w for the next tick. At the default tick, substeps are 5 ms.
+    """
     x, y, yaw = pose
     for _ in range(10):
         h = dt/10
@@ -76,6 +105,13 @@ def plant(pose, v, w, command, dt):
 
 
 def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
+    """Individual helper checks do not show whether sensing, planning
+    and motion work together over a complete run.
+
+    Run the repeatable loop, raise on detected body-wall overlap, and return
+    completion, clearance, timing, reasons, samples and engine state. Completion
+    requires a DONE plan and near-zero measured speeds.
+    """
     walls, goal = course(name)
     config = config or Lab3Config(goal_x=goal[0], goal_y=goal[1], alignment_enabled=False)
     engine = NavigationEngine(config)
@@ -121,6 +157,12 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
 
 
 def main(args=None):
+    """Regression runs need comparable results and a visible failure
+    when the goal is not reached.
+
+    Run a selected course, optionally replay a completed first run, print summaries
+    and optionally export CSV/NPZ files. Incomplete runs exit with failure.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner'), default='obstacle')
     parser.add_argument('--seconds', type=float, default=90.)

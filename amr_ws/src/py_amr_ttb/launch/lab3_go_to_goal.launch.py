@@ -1,4 +1,8 @@
-"""Learn an unknown course, saving evidence and the successful trajectory."""
+"""Start exploration with configurable robot wiring and a saved-run destination.
+
+Learning gathers map evidence and a trajectory for later replay. Completion is
+determined by the configured goal, and run status is stored with the evidence.
+"""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -7,6 +11,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    """Launch the learning controller with consistent namespace, base frame and run file."""
     return LaunchDescription([
         DeclareLaunchArgument('robot_namespace', default_value='/TTB10'),
         DeclareLaunchArgument('run_file', default_value='~/amr_lab3_runs/course.npz'),
