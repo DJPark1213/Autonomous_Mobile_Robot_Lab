@@ -126,7 +126,12 @@ class Lab3Config:
     goal_y: float = 0.0
     goal_tolerance: float = 0.12
     # Command limits and calibrated response govern the predicted stopping path.
+
+    # ==================== TUNE 1/5: DRIVING SPEED ====================
+    # Forward speed cap (m/s); raise gradually after braking checks.
     max_linear: float = 0.30
+    # ===============================================================
+
     max_angular: float = 1.4
     reverse_speed: float = 0.08
     linear_acceleration: float = 0.4
@@ -167,13 +172,32 @@ class Lab3Config:
     switch_margin: float = 0.10
     # Balance progress and usable space against turns and repeated failures.
     weight_goal: float = 0.40
+
+    # ==================== TUNE 2/5: USABLE TRAVEL ====================
+    # Higher favors directions with longer observed, usable travel.
     weight_travel: float = 0.30
+    # ===============================================================
+
     weight_clearance: float = 0.10
+
+    # ==================== TUNE 3/5: FEWER TURNS ======================
+    # Higher discourages large changes in heading.
     weight_heading: float = 0.10
+    # ===============================================================
+
+    # ==================== TUNE 4/5: STEADIER ROTATION ================
+    # Higher discourages changes from measured angular velocity.
     weight_rotation: float = 0.10
+    # ===============================================================
+
     weight_history: float = 0.35
     # Steer toward targets; large heading errors require alignment before travel.
+
+    # ==================== TUNE 5/5: STEERING RESPONSE ===============
+    # Lower for zigzagging; higher for sluggish steering.
     heading_gain: float = 2.0
+    # ===============================================================
+
     rotate_threshold: float = 1.0
     # Nearby walls can guide motion around corners while preserving separation.
     wall_trigger: float = 0.40
