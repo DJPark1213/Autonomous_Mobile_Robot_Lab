@@ -1,7 +1,6 @@
 # Autonomous Mobile Robot Lab
 
-**Current focus: Lab 3 — escape an unknown maze quickly, then improve the second
-run.** Built for the TurtleBot 4 with ROS 2 Humble.
+Built for the TurtleBot 4 with ROS 2 Humble.
 
 [Architecture](#lab-3-module-diagram) · [First run](#build-and-first-run) ·
 [Second run](#second-run) · [Tests](#offline-checks-and-current-status) ·
@@ -24,46 +23,79 @@ Scoring, timing, clearance, and motion response are configurable.
 
 ```mermaid
 flowchart TB
+  ROBOT["TurtleBot 4<br/>Physical motion produces new sensor readings"]
   LASER["360-degree LiDAR + laser TF"]
   ODOM["Odometry"]
   CONFIG["lab_config.py / Lab3Config<br/>Shared tunable settings"]
 
   subgraph ROS["node.py — sensor callbacks and 20 Hz control"]
-    GEOMETRY["geometry.py<br/>Hits, unknown beams, footprint clearance"]
+    SCAN["geometry.py / process_scan<br/>Classify hits and known beams; attach acquisition pose"]
     STATE["state.py / StateTracker<br/>Reuses odom_utils.py<br/>Pose, measured velocity, scan-time interpolation"]
-    MOTION["motion.py<br/>Steering, acceleration, turning and stopping sweep"]
-    COMMAND["node.py publishes cmd_vel<br/>Robot moves toward the target"]
+    SNAPSHOT["Work snapshot<br/>Current state + scan + time + blocked feedback"]
+    MOTION["motion.py / step_plan<br/>Convert map target to odometry; steer and predict a full stop<br/>Check footprint clearance with geometry.py"]
+    COMMAND["node.py publishes cmd_vel<br/>Checked velocity, or zero when inputs are invalid"]
   end
+
+  INCOMING["Latest-work queue<br/>One pending snapshot; control does not wait"]
+  OUTGOING["Latest-plan queue<br/>Target + matching map transform + time + diagnostics"]
 
   subgraph WORKER["worker.py — separate planning process"]
     MAP["mapping.py + state.PoseEstimator<br/>Occupancy evidence and pose correction"]
-    PLAN["planner.py<br/>Score directions, hold a target, recover from dead ends"]
+    PLAN["planner.py / step<br/>Keep, replay, recover or score a new target<br/>Check observed travel with geometry.py"]
     MEMORY["memory.py<br/>Trajectory and failed directions"]
     REPLAY["replay.py<br/>Verified shortcuts, corner smoothing, speed profile"]
+    SAVE["memory.py / save<br/>Atomically save map, route and history"]
   end
 
   SAVED["course.npz<br/>Saved map and first-run experience"]
   LOG["telemetry.py<br/>CSV commands, motion and decision reasons"]
 
-  LASER --> GEOMETRY
+  ROBOT --> LASER
+  ROBOT --> ODOM
+  LASER --> SCAN
   ODOM --> STATE
-  GEOMETRY -->|latest scan| MAP
-  STATE -->|timestamped pose| MAP
-  MAP -->|map and corrected pose| PLAN
-  PLAN <--> MEMORY
-  MAP -->|map evidence| SAVED
-  MEMORY -->|route and history| SAVED
-  SAVED -->|second run| REPLAY
-  REPLAY -->|improved route| PLAN
-  PLAN -->|held target and frame transform| MOTION
-  GEOMETRY -->|fresh scan| MOTION
+  STATE -->|pose_at scan acquisition time| SCAN
+  SCAN --> SNAPSHOT
+  STATE --> SNAPSHOT
+  MOTION -->|blocked: reconsider the previous target| SNAPSHOT
+  SNAPSHOT --> INCOMING
+  INCOMING -->|scan and reported pose uncertainty| MAP
+  INCOMING -->|state, scan and blocked feedback| PLAN
+  MAP -->|map queries and odometry-to-map transform| PLAN
+  PLAN -->|record poses and failed directions| MEMORY
+  MEMORY -->|failure penalties and verified return points| PLAN
+  PLAN --> OUTGOING
+  OUTGOING -->|use target with its own transform; reject expired plans| MOTION
+  SCAN -->|latest valid scan; old or missing data stops motion| MOTION
   STATE -->|current pose and measured velocities| MOTION
   MOTION --> COMMAND
-  MOTION --> LOG
+  COMMAND --> ROBOT
+  STATE -->|measured pose and speeds| LOG
+  MOTION -->|command and slowdown or stop reason| LOG
+  OUTGOING -->|mode, plan age and worker diagnostics| LOG
+
+  MAP -->|map layers| SAVE
+  MEMORY -->|route, attempts and completion status| SAVE
+  SAVE -->|completion, timeout, save request or shutdown| SAVED
+  SAVED -->|replay startup: restore map; require initial scan alignment| MAP
+  SAVED -->|replay startup: recorded route| REPLAY
+  MAP -->|verify shortcuts against observed footprint clearance| REPLAY
+  REPLAY -->|improved route and bend speed caps| PLAN
+
   CONFIG -.-> MAP
   CONFIG -.-> PLAN
   CONFIG -.-> MOTION
 ```
+
+The two loops share sensor snapshots but have different jobs:
+
+- **Planning chooses where to go.** The worker updates the map, queries clearance
+  and failure history, and returns a target paired with its map transform.
+- **Control checks how to move now.** It uses the latest state and scan to test
+  steering and the complete stopping path. A blocked result goes back to planning;
+  a saved route or held target cannot override the live clearance checks.
+- **Replay reuses evidence.** At startup, the saved map supports route verification
+  and initial alignment. The improved route guides the same planner and controller.
 
 The control loop checks live scan clearance every **0.05 s**. The worker updates
 the map every **0.20 s** and normally chooses a direction every **0.50 s**.

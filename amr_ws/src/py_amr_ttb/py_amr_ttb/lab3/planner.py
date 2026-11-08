@@ -20,7 +20,7 @@ class Planner:
     decision owner so they do not issue competing targets.
 
     Targets use map coordinates; candidate clearance uses the current robot frame.
-    Motion control independently checks commands against current sensing.
+    Motion control independently checks commands against current sensing.p
     """
 
     def __init__(self, config, memory, replay_route=None):
@@ -108,111 +108,196 @@ class Planner:
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
     def step(self, state, scan, mapper, now, blocked=False):
-        """A locally attractive direction can stop making progress or
-        lead back into the same failed area.
+        """A useful target can become blocked or lead back into a failed area.
 
-        Track progress, completion and timeout; retain useful targets and committed
-        recovery. On stalls, revisits or observed caps, seek a verified return
-        point. Otherwise use replay or scored section candidates, with a switching
-        margin to limit oscillation. Return a Plan carrying its matching map
-        transform.
+        Keep it, replace it, or request recovery using the checks below in order.
+        Each return ends this decision. The returned Plan carries the target's
+        map transform; motion control checks velocity commands separately.
         """
+        # 1. Targets use map coordinates; direction checks use the robot's frame now.
         c, grid = self.cfg, mapper.grid
         pose = compose(mapper.transform, state.pose)
         local_scan = scan_at_pose(scan, state.pose)
         self.memory.record(pose, now)
+
         if self.started is None:
             self.started = self.progress_at = now
             self.anchor = pose[:2]
+
+        # 2. Finish once the goal is reached, or stop an overlong run.
         distance = math.hypot(c.goal_x-pose[0], c.goal_y-pose[1])
         if self.memory.complete or distance <= c.goal_tolerance:
             self.memory.complete = True
             self.target = Target((c.goal_x, c.goal_y), 'DONE')
             return Plan(self.target, mapper.transform, now, grid.revision, 'DONE')
+
         if now-self.started > c.max_runtime:
             return Plan(None, mapper.transform, now, grid.revision, 'TIME_LIMIT')
-        near = self.target is None or math.dist(pose[:2], self.target.point) < c.target_reached
+
+        # 3. Complete an unblocked retreat before choosing another exploration target.
+        # Otherwise the planner could send the robot straight back into the same pocket.
+        near = (
+            self.target is None
+            or math.dist(pose[:2], self.target.point) < c.target_reached
+        )
         if self.target and self.target.mode == 'BACKTRACK' and not near and not blocked:
-            # Reconsidering too soon could send recovery straight back into the failed area.
             return Plan(self.target, mapper.transform, now, grid.revision)
+
+        # 4. If the goal is nearby and its whole approach is observed, aim there directly.
         if distance <= c.target_distance:
-            goal_heading = normalize_angle(math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2])
+            goal_heading = normalize_angle(
+                math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2]
+            )
             if observed_travel(local_scan, goal_heading, c.radius, distance+.15) >= distance:
                 self.target = Target((c.goal_x, c.goal_y), 'FINAL')
                 return Plan(self.target, mapper.transform, now, grid.revision)
+
+        # 5. Recognize getting stuck: little movement, a loop, or an observed dead end.
+        # Progress means displacement from an anchor, not necessarily toward the goal.
         if math.dist(pose[:2], self.anchor) >= c.progress_distance:
-            # Tiny pose changes should not keep a stuck robot's progress timer alive.
             self.anchor, self.progress_at = pose[:2], now
+
+        # Ignore very recent nearby samples: normal slow travel is not a revisit.
         self.recent.append((now, *pose[:2]))
         self.recent = [entry for entry in self.recent if now-entry[0] <= c.revisit_window]
-        revisited = any(now-entry[0] >= c.revisit_min_age
-                        and math.dist(pose[:2], entry[1:]) < c.revisit_radius
-                        for entry in self.recent)
+        revisited = any(
+            now-entry[0] >= c.revisit_min_age
+            and math.dist(pose[:2], entry[1:]) < c.revisit_radius
+            for entry in self.recent
+        )
         goal_angle = math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])
         capped = grid.closed_ahead(pose[:2], goal_angle)
         stalled = now-self.progress_at >= c.stall_timeout or revisited or capped
+
+        # 6. Remember the failed direction and seek a verified path to an earlier point.
         if stalled:
-            # Remember this failed direction so the next decision does not repeat it.
-            direction = (math.atan2(self.target.point[1]-pose[1], self.target.point[0]-pose[0])
-                         if self.target else pose[2])
+            direction = (
+                math.atan2(self.target.point[1]-pose[1], self.target.point[0]-pose[0])
+                if self.target else pose[2]
+            )
             self.memory.fail(pose[:2], direction, now)
             self.progress_at = now
             previous = self.memory.return_target(pose[:2], grid)
+
             if previous is not None:
-                angle = normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])
-                # A return point far behind may be reached by backing out; the
-                # motion sweep must still verify rear clearance.
+                angle = normalize_angle(
+                    math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2]
+                )
+                # Back out if the return point is far behind; control checks rear clearance.
                 self.target = Target(previous, 'BACKTRACK', reverse=abs(angle) > 2.2)
+
+                # Discourage choosing the same goalward direction upon returning there.
                 self.memory.fail(previous, goal_angle, now)
                 self.recent.clear()
                 self.last_decision = now
                 return Plan(self.target, mapper.transform, now, grid.revision)
-        near = self.target is None or math.dist(pose[:2], self.target.point) < c.target_reached
-        if not blocked and not near and not stalled and now-self.last_decision < c.decision_period:
-            # A usable held target avoids steering changes at every sensor update.
-            return Plan(self.target, mapper.transform, now, grid.revision, diagnostics=self.diagnostics)
+
+        # 7. Keep a useful target between decision times to avoid constant steering changes.
+        # Arrival, blockage or stalled progress allows an earlier decision.
+        near = (
+            self.target is None
+            or math.dist(pose[:2], self.target.point) < c.target_reached
+        )
+        if (
+            not blocked and not near and not stalled
+            and now-self.last_decision < c.decision_period
+        ):
+            return Plan(
+                self.target, mapper.transform, now, grid.revision,
+                diagnostics=self.diagnostics,
+            )
+
         self.last_decision = now
         self.diagnostics = {}
+
+        # 8. During replay, prefer a verified saved-route target while progress is healthy.
         if self.route is not None and not blocked and not stalled:
             target = self.replay_target(pose, local_scan, grid)
             if target is not None:
                 self.target = target
-                return Plan(target, mapper.transform, now, grid.revision, diagnostics=self.diagnostics)
-        # Coarse angular samples may miss a clear direct line to the goal.
-        goal_heading = normalize_angle(math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2])
+                return Plan(
+                    target, mapper.transform, now, grid.revision,
+                    diagnostics=self.diagnostics,
+                )
+
+        # 9. Otherwise, search all angular sections for a useful local direction.
+        goal_heading = normalize_angle(
+            math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2]
+        )
         options = []
         for lower, upper in self.sections():
             headings = list(np.linspace(lower, upper, c.heading_samples))
+
+            # Regular samples could miss a clear direction exactly toward the goal.
             if lower <= goal_heading <= upper:
                 headings.append(goal_heading)
-            candidates = [self.evaluate(normalize_angle(h), local_scan, pose, state, grid, now)
-                          for h in headings]
+
+            # Each candidate keeps (Target with score, room, heading) together.
+            # None means that heading cannot provide a useful observed approach.
+            candidates = [
+                self.evaluate(normalize_angle(h), local_scan, pose, state, grid, now)
+                for h in headings
+            ]
             candidates = [candidate for candidate in candidates if candidate is not None]
             if candidates:
                 best = max(candidates, key=lambda item: item[0].score)
+
+                # Nearby room can still lead into a mapped dead end. Keep this
+                # section's winner only if the pocket test does not establish a cap.
                 if not grid.closed_ahead(pose[:2], pose[2]+best[2]):
                     options.append(best)
+
+        # With no surviving section, try retreating; no return point means no target.
         if not options:
             previous = self.memory.return_target(pose[:2], grid)
-            angle = (normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])
-                     if previous else 0.)
-            self.target = Target(previous, 'BACKTRACK', reverse=abs(angle) > 2.2) if previous else None
+            angle = (
+                normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])
+                if previous else 0.
+            )
+            self.target = (
+                Target(previous, 'BACKTRACK', reverse=abs(angle) > 2.2)
+                if previous else None
+            )
             return Plan(self.target, mapper.transform, now, grid.revision, 'NO_LOCAL_ROUTE')
+
+        # Select the entire winning candidate, so its score, room and heading stay paired.
         best, room, heading = max(options, key=lambda item: item[0].score)
+
+        # 10. A small score advantage should not make the robot alternate between targets.
         if self.target and not near and not blocked and not stalled:
-            # Nearly equal scores can alternate between scans and cause steering
-            # oscillation; require a margin before abandoning a usable target.
-            old_heading = normalize_angle(math.atan2(self.target.point[1]-pose[1], self.target.point[0]-pose[0])-pose[2])
+            old_heading = normalize_angle(
+                math.atan2(self.target.point[1]-pose[1], self.target.point[0]-pose[0])-pose[2]
+            )
             old = self.evaluate(old_heading, local_scan, pose, state, grid, now)
-            if (old and old[1] >= math.dist(pose[:2], self.target.point)+c.target_reserve
-                    and not grid.closed_ahead(pose[:2], pose[2]+old_heading)
-                    and best.score < old[0].score+c.switch_margin):
+
+            # Keep the old target if it still has enough room, is not capped,
+            # and the new score fails to improve by switch_margin.
+            # old[0] is its freshly evaluated Target; old[1] is available room.
+            if (
+                old and old[1] >= math.dist(pose[:2], self.target.point)+c.target_reserve
+                and not grid.closed_ahead(pose[:2], pose[2]+old_heading)
+                and best.score < old[0].score+c.switch_margin
+            ):
                 return Plan(self.target, mapper.transform, now, grid.revision)
-        if distance <= c.target_distance and room >= distance+c.target_reserve and abs(normalize_angle(heading-goal_heading)) < .04:
+
+        # 11. Tell control whether to brake at the goal or steer along a nearby wall.
+        if (
+            distance <= c.target_distance
+            and room >= distance+c.target_reserve
+            and abs(normalize_angle(heading-goal_heading)) < .04
+        ):
             best = Target((c.goal_x, c.goal_y), 'FINAL', best.score)
         elif room < c.wall_trigger:
             best.mode = 'FOLLOW_WALL'
             best.wall_side = -1 if heading >= 0 else 1
+
+        # The plan carries this target's map transform so later corrections cannot
+        # make control interpret it using a different coordinate relationship.
         self.target = best
-        self.diagnostics.update(candidate_count=len(options), score=best.score, available_travel=room)
-        return Plan(best, mapper.transform, now, grid.revision, diagnostics=self.diagnostics)
+        self.diagnostics.update(
+            candidate_count=len(options), score=best.score, available_travel=room,
+        )
+        return Plan(
+            best, mapper.transform, now, grid.revision,
+            diagnostics=self.diagnostics,
+        )
