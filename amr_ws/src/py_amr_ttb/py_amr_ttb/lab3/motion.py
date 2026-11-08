@@ -126,77 +126,125 @@ class MotionController:
         return self.step(state, scan, target, now, dt, plan.diagnostics.get('speed_cap'))
 
     def step(self, state, scan, target, now, dt, speed_cap=None):
-        """Even a reachable target may require a slower approach,
-        alignment first, or a stop under current sensing and motion.
+        """A reachable target can still require slowing, alignment or a stop.
 
-        Given an odometry-frame target, limit speed for heading, turns, route bends
-        and arrival; try bounded candidate speeds with stopping-sweep checks. If
-        travel fails, try alignment while nearly stopped, then request a stop and
-        report blocked. Return MotionResult. Stale inputs also request a stop.
+        Choose a velocity using current measured motion and scan clearance.
+        target.point uses starting odometry; v is m/s and w is rad/s. Each return
+        ends this decision with a MotionResult for node.py to publish.
         """
+        # 1. Old measurements cannot support a new motion prediction.
+        # Invalid timing, no target or a completed run requests zero velocity.
         c = self.cfg
-        if (not 0 < dt <= c.sensor_timeout or not 0 <= now-state.received <= c.sensor_timeout
-                or not 0 <= now-scan.received <= c.sensor_timeout):
+        if (
+            not 0 < dt <= c.sensor_timeout
+            or not 0 <= now-state.received <= c.sensor_timeout
+            or not 0 <= now-scan.received <= c.sensor_timeout
+        ):
             return MotionResult(reason='SENSOR_STOP', blocked=True)
+
         if target is None:
             return MotionResult(reason='WAITING')
+
         if target.mode == 'DONE':
             return MotionResult(reason='DONE')
+
+        # 2. Steering needs the target's distance and angle relative to the robot now.
         local = inverse_points([target.point], state.pose)[0]
         distance = float(np.linalg.norm(local))
         heading = math.atan2(local[1], local[0])
+
+        # Backward travel should align the robot's rear, rather than its front,
+        # toward the target. A negative linear speed is selected below.
         if target.reverse:
             heading = normalize_angle(heading-math.pi)
+
+        # 3. Wall following needs a direction along the wall plus a correction
+        # toward the desired separation, instead of steering only at the target.
         if target.mode == 'FOLLOW_WALL' and len(scan.points):
-            # Wall steering needs distances from the robot now, even when it has
-            # moved since these hits were acquired.
+            # The robot may have moved since acquisition; compare hits in its frame now.
             points = inverse_points(transform_points(scan.points, scan.pose), state.pose)
             side = points[:, 1]*target.wall_side > 0
             if side.any():
                 candidates = points[side]
                 nearest = candidates[np.argmin(np.linalg.norm(candidates, axis=1))]
                 separation = np.linalg.norm(nearest)
+
+                # normal points away from the nearest hit; tangent runs along the wall.
+                # The separation error pushes away when too close and toward it when far.
                 normal = -nearest/max(separation, 1e-9)
                 tangent = target.wall_side*np.array([-normal[1], normal[0]])
-                vector = tangent+np.clip(c.wall_gain*(c.wall_distance-separation), -.7, .7)*normal
+                vector = tangent+np.clip(
+                    c.wall_gain*(c.wall_distance-separation), -.7, .7,
+                )*normal
                 heading = math.atan2(vector[1], vector[0])
+
+        # 4. Larger heading errors request faster turning, up to the angular limit.
         desired_w = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
+
+        # 5. Collect linear-speed limits with their reasons, then use the lowest.
+        # A replay bend may lower the ordinary cruise-speed ceiling.
         top = min(c.max_linear, c.max_linear if speed_cap is None else speed_cap)
         reasons = [(top, 'SPEED_LIMIT' if top == c.max_linear else 'ROUTE_BEND')]
+
+        # Reduce forward motion while pointing away from the desired direction.
         reasons.append((top*max(0., math.cos(heading)), 'HEADING'))
+
+        # Turning at speed produces lateral acceleration, approximately abs(v * w).
         if abs(desired_w) > .05:
             reasons.append((c.lateral_acceleration/abs(desired_w), 'TURN'))
+
         # Braking at every intermediate target would turn continuous travel into
-        # stop-and-go motion; reserve arrival braking for the final goal.
+        # stop-and-go motion. Only the final goal adds a stopping-distance limit.
         if target.mode == 'FINAL':
-            reasons.append((math.sqrt(2*c.linear_braking*max(0., distance-c.goal_tolerance)), 'ARRIVAL'))
+            reasons.append((
+                math.sqrt(2*c.linear_braking*max(0., distance-c.goal_tolerance)),
+                'ARRIVAL',
+            ))
+
+        # Selecting the whole pair keeps the limiting speed tied to its explanation.
         desired, reason = min(reasons, key=lambda pair: pair[0])
+
+        # 6. Recovery may reverse slowly; a large heading error requires alignment first.
         if target.reverse:
             desired = -min(desired, c.reverse_speed)
             reason = 'REVERSE'
+
         if abs(heading) >= c.rotate_threshold:
-            # Brake translation before a large turn so alignment does not sweep
-            # the moving body sideways into an obstacle.
             desired, reason = 0., 'ALIGN'
             if abs(state.v) > .025:
+                # Brake translation before turning so the moving body does not
+                # sweep sideways into a nearby obstacle during alignment.
                 desired_w = 0.
                 reason = 'BRAKE_FOR_TURN'
+
+        # 7. Normal command changes respect acceleration and braking limits.
+        # Start from measured speeds, since the previous command may not be achieved yet.
         v = approach(state.v, desired, c.linear_acceleration, c.linear_braking, dt)
         w = approach(state.w, desired_w, c.angular_acceleration, c.angular_braking, dt)
         v = float(np.clip(v, -c.reverse_speed, c.max_linear))
         w = float(np.clip(w, -c.max_angular, c.max_angular))
-        # Try slower commands when full speed cannot stop within observed room.
-        # Every trial starts from measured motion, not the reduced command speed.
+
+        # 8. A desirable speed may lack stopping room. Try slower commands with
+        # the same turn command; safe() predicts each from the measured current state.
         for fraction in (1., .75, .5, .25):
             trial = v*fraction
             safe, trajectory = self.safe(state, scan, trial, w, now)
             if safe and abs(trial) > .004:
-                return MotionResult(trial, w, reason if fraction == 1 else 'CLEARANCE', False, trajectory)
-        # Attempting alignment while still translating could sweep the body into
-        # a nearby obstacle, so moving robots receive a stop request first.
+                return MotionResult(
+                    trial, w, reason if fraction == 1 else 'CLEARANCE', False, trajectory,
+                )
+
+        # 9. If travel failed, try turning in place only when almost stopped.
+        # Rotation still needs a clear predicted stopping sweep.
         if abs(state.v) < .025:
             safe, trajectory = self.safe(state, scan, 0., w, now)
             if safe and abs(w) > .005:
                 return MotionResult(0., w, 'ALIGN', False, trajectory)
+
+        # 10. No travel or alignment command qualified. Request zero velocity and
+        # tell planning it is blocked. Even this stop has residual motion: report
+        # EMERGENCY_STOP if the predicted braking path itself fails clearance.
         safe, trajectory = self.safe(state, scan, 0., 0., now)
-        return MotionResult(0., 0., 'BRAKE_PATH_BLOCKED' if safe else 'EMERGENCY_STOP', True, trajectory)
+        return MotionResult(
+            0., 0., 'BRAKE_PATH_BLOCKED' if safe else 'EMERGENCY_STOP', True, trajectory,
+        )
