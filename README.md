@@ -23,84 +23,103 @@ Scoring, timing, clearance, and motion response are configurable.
 
 ```mermaid
 flowchart TB
-  ROBOT["TurtleBot 4<br/>Physical motion produces new sensor readings"]
-  LASER["360-degree LiDAR + laser TF"]
-  ODOM["Odometry"]
-  CONFIG["lab_config.py / Lab3Config<br/>Shared tunable settings"]
+  ODOM["ROS odometry messages"]
+  LASER["ROS laser messages + laser-to-base TF"]
 
-  subgraph ROS["node.py — sensor callbacks and 20 Hz control"]
-    SCAN["geometry.py / process_scan<br/>Classify hits and known beams; attach acquisition pose"]
-    STATE["state.py / StateTracker<br/>Reuses odom_utils.py<br/>Pose, measured velocity, scan-time interpolation"]
-    SNAPSHOT["Work snapshot<br/>Current state + scan + time + blocked feedback"]
-    MOTION["motion.py / step_plan<br/>Convert map target to odometry; steer and predict a full stop<br/>Check footprint clearance with geometry.py"]
-    COMMAND["node.py publishes cmd_vel<br/>Checked velocity, or zero when inputs are invalid"]
+  subgraph NODE["Process 1: node.py / Lab3Node — ROS I/O and motion control"]
+    STATE["on_odom<br/>Validate time and frame<br/>state.py / StateTracker.update"]
+    SCAN["on_scan<br/>StateTracker.pose_at acquisition time<br/>geometry.py / process_scan"]
+    TICK["tick — every control_period<br/>Read newest Plan; keep latest state and scan<br/>Check freshness, faults, pause and worker health"]
+    CONTROL["motion.py / MotionController.step_plan<br/>Check plan expiry; transform target<br/>Steer and check predicted stopping sweep"]
+    PUBLISH["publish<br/>Send cmd_vel from MotionResult<br/>Default result is zero velocity when gated"]
+    LOG["telemetry.py / Telemetry.record<br/>Queue measurements, command and diagnostics<br/>Background thread writes CSV"]
+    LIFECYCLE["stop_run / save_run / reset_run / close<br/>Pause, request save, restart or stop worker"]
   end
 
-  INCOMING["Latest-work queue<br/>One pending snapshot; control does not wait"]
-  OUTGOING["Latest-plan queue<br/>Target + matching map transform + time + diagnostics"]
-
-  subgraph WORKER["worker.py — separate planning process"]
-    MAP["mapping.py + state.PoseEstimator<br/>Occupancy evidence and pose correction"]
-    PLAN["planner.py / step<br/>Keep, replay, recover or score a new target<br/>Check observed travel with geometry.py"]
-    MEMORY["memory.py<br/>Trajectory and failed directions"]
-    REPLAY["replay.py<br/>Verified shortcuts, corner smoothing, speed profile"]
-    SAVE["memory.py / save<br/>Atomically save map, route and history"]
+  subgraph IPC["Created by Lab3Node.start_worker — communication between processes"]
+    INCOMING["self.incoming — Queue with capacity 1<br/>Work: state, scan, now, blocked"]
+    OUTGOING["self.outgoing — Queue with capacity 1<br/>Plan: target, transform, created, map_revision, status, diagnostics"]
+    EVENTS["save_requested and stopping<br/>Multiprocessing events"]
   end
 
-  SAVED["course.npz<br/>Saved map and first-run experience"]
-  LOG["telemetry.py<br/>CSV commands, motion and decision reasons"]
+  subgraph WORKER["Process 2: worker.py — started with multiprocessing spawn"]
+    LOOP["worker_main<br/>Own a NavigationEngine<br/>Handle events and consume newest available Work"]
+    ENGINE["NavigationEngine.step<br/>1. Require initial alignment in replay<br/>2. Mapper.update when map update is due<br/>3. Planner.step to keep or choose a target"]
+    SAVE["NavigationEngine.save<br/>RunMemory.save writes current evidence and experience"]
+  end
 
-  ROBOT --> LASER
-  ROBOT --> ODOM
-  LASER --> SCAN
+  ROBOT["Robot receives velocity command"]
+  SAVED[("Generated run file<br/>Path from config.run_file<br/>Not included in the repository")]
+
   ODOM --> STATE
-  STATE -->|pose_at scan acquisition time| SCAN
-  SCAN --> SNAPSHOT
-  STATE --> SNAPSHOT
-  MOTION -->|blocked: reconsider the previous target| SNAPSHOT
-  SNAPSHOT --> INCOMING
-  INCOMING -->|scan and reported pose uncertainty| MAP
-  INCOMING -->|state, scan and blocked feedback| PLAN
-  MAP -->|map queries and odometry-to-map transform| PLAN
-  PLAN -->|record poses and failed directions| MEMORY
-  MEMORY -->|failure penalties and verified return points| PLAN
-  PLAN --> OUTGOING
-  OUTGOING -->|use target with its own transform; reject expired plans| MOTION
-  SCAN -->|latest valid scan; old or missing data stops motion| MOTION
-  STATE -->|current pose and measured velocities| MOTION
-  MOTION --> COMMAND
-  COMMAND --> ROBOT
-  STATE -->|measured pose and speeds| LOG
-  MOTION -->|command and slowdown or stop reason| LOG
-  OUTGOING -->|mode, plan age and worker diagnostics| LOG
-
-  MAP -->|map layers| SAVE
-  MEMORY -->|route, attempts and completion status| SAVE
-  SAVE -->|completion, timeout, save request or shutdown| SAVED
-  SAVED -->|replay startup: restore map; require initial scan alignment| MAP
-  SAVED -->|replay startup: recorded route| REPLAY
-  MAP -->|verify shortcuts against observed footprint clearance| REPLAY
-  REPLAY -->|improved route and bend speed caps| PLAN
-
-  CONFIG -.-> MAP
-  CONFIG -.-> PLAN
-  CONFIG -.-> MOTION
+  LASER --> SCAN
+  STATE -->|scan-time pose history| SCAN
+  STATE -->|latest RobotState| TICK
+  SCAN -->|latest valid Scan, or None| TICK
+  TICK -->|enqueue snapshot when due or previously blocked| INCOMING
+  INCOMING -->|worker receives Work without ROS callbacks| LOOP
+  LOOP -->|engine.step with selected Work| ENGINE
+  ENGINE -->|Plan with timing and alignment diagnostics| LOOP
+  LOOP -->|put_latest| OUTGOING
+  OUTGOING -->|take_latest at start of tick| TICK
+  TICK -->|fresh sensors and active worker| CONTROL
+  CONTROL -->|MotionResult; blocked saved for next Work| TICK
+  TICK -->|publish result every tick| PUBLISH
+  PUBLISH --> ROBOT
+  TICK -->|state, result and plan diagnostics| LOG
+  LIFECYCLE -->|set save_requested or stopping as appropriate| EVENTS
+  EVENTS --> LOOP
+  LOOP -->|save request or final save on exit| SAVE
+  ENGINE -->|save once on DONE or TIME_LIMIT| SAVE
+  SAVE --> SAVED
 ```
 
-The two loops share sensor snapshots but have different jobs:
+The outer boxes are **process boundaries**, not additional source files.
+`node.py` creates the worker process, queues and events in `start_worker()` and
+passes the validated `Lab3Config` to it. The file is `worker.py`; it defines both
+the `Work` record and the worker entry point. `Plan` is defined in `types.py`.
+Queues transfer records between processes; the worker's live map and planner
+objects remain owned by its `NavigationEngine`.
 
-- **Planning chooses where to go.** The worker updates the map, queries clearance
-  and failure history, and returns a target paired with its map transform.
-- **Control checks how to move now.** It uses the latest state and scan to test
-  steering and the complete stopping path. A blocked result goes back to planning;
-  a saved route or held target cannot override the live clearance checks.
-- **Replay reuses evidence.** At startup, the saved map supports route verification
-  and initial alignment. The improved route guides the same planner and controller.
+**`node.py` owns sensing and velocity publication.** `on_odom()` maintains pose
+history; `on_scan()` uses it to attach an acquisition-time pose to the scan.
+`tick()` submits snapshots without waiting for a planning result. If no newer
+plan has arrived, it can reuse its held plan until that plan expires. With valid
+prerequisites, it calls `MotionController.step_plan()` using current sensor data;
+otherwise it publishes the default zero-velocity result. The worker never
+publishes `cmd_vel`.
 
-The control loop checks live scan clearance every **0.05 s**. The worker updates
-the map every **0.20 s** and normally chooses a direction every **0.50 s**.
-A blocked or nearby target can trigger an earlier decision. Only the latest
-pending sensor snapshot is retained, so planning work does not accumulate.
+**`worker.py` owns the slower navigation state.** `worker_main()` receives a
+snapshot and calls `NavigationEngine.step()`; it does not run on a fixed control
+timer. Within that engine, the existing modules interact as follows:
+
+| Call or owner | Interaction |
+| --- | --- |
+| `NavigationEngine.__init__()` | Creates `RunMemory` (`memory.py`), `Mapper` (`mapping.py`) and `Planner` (`planner.py`). In replay, loads a completed generated run file and calls `replay.optimize_route()` before constructing the planner. |
+| Replay initialization | `optimize_route()` queries the loaded grid's `segment_clear()` for shortcuts and rounded corners. `Planner.__init__()` calls `replay.speed_profile()` for bend-speed caps. |
+| `NavigationEngine.step()` | First requires an accepted initial scan alignment in replay. Calls `Mapper.update(scan, covariance)` if a map update is due. After that check, calls `Planner.step(state, scan, mapper, now, blocked)` for each aligned snapshot, including those without a map update. |
+| `Mapper.update()` | Uses `state.PoseEstimator` and local scan matching to update the odometry-to-map transform, then integrates the scan into `OccupancyMap`. Duplicate scans are not inserted again. |
+| `Planner.step()` | Queries map evidence, uses `geometry.py` to check candidate travel, and calls `RunMemory` to record poses, penalize failed directions and find return points. Replay uses the optimized route when appropriate. |
+| Return to `worker_main()` | The engine adds diagnostics to the `Plan`. The worker puts it in `outgoing`; a later `node.py` tick reads it. A target and its frame transform travel together. |
+| `NavigationEngine.save()` | Passes memory, map layers and transform to `RunMemory.save()`. Saving creates a runtime file at the configured path; replay writes a separate result file. |
+
+The `blocked` flag in a submitted `Work` comes from the **previous control
+result**. It asks planning to reconsider; the next plan does not bypass current
+clearance checks. Each queue holds at most one pending item, and the helpers
+attempt to replace old pending data rather than build a backlog. Work already
+being processed is not interrupted.
+
+With default settings, control runs every **0.05 s**, snapshots are normally
+submitted every **0.20 s**, and the worker updates the map no more frequently
+than every **0.20 s**. Planning is called for processed snapshots but normally
+holds a target between **0.50 s** decisions. Blockage or reaching a target can
+trigger earlier reconsideration. These are configured intervals, not guarantees
+that worker computation finishes within them.
+
+`stop_run()` pauses control, publishes zero and sets `save_requested` without
+ending the worker. `save_run()` only requests saving. `reset_run()` requires a
+paused, nearly stationary robot and restarts the worker and pose history;
+`close()` requests zero velocity and shuts down the worker and logging.
 
 ### How the two runs work
 
@@ -144,7 +163,8 @@ original position and heading. In a terminal with the ROS workspace sourced:
 ros2 launch py_amr_ttb lab3_replay.launch.py robot_namespace:=/TTB10
 ```
 
-The default learned course is `~/amr_lab3_runs/course.npz`. Both launches accept
+Saving a learning run creates a file at `~/amr_lab3_runs/course.npz` by default;
+that file is not supplied with the repository. Both launches accept
 `run_file:=/absolute/path/course.npz`. Replay requires a completed first run and
 a successful initial scan alignment. Its output is saved separately as
 `course.replay.npz`.
