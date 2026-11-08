@@ -21,35 +21,41 @@ Scoring, timing, clearance, and motion response are configurable.
 
 ### Lab 3 module diagram
 
+In the diagrams, `node.py`, `worker.py`, and the other algorithm files are in
+[`amr_ws/src/py_amr_ttb/py_amr_ttb/lab3/`](amr_ws/src/py_amr_ttb/py_amr_ttb/lab3/).
+Each code box names its source file and function or class. The outer boxes show
+which process executes that code. This runtime diagram applies to **both runs**;
+their different startup paths are shown under [How the two runs work](#how-the-two-runs-work).
+
 ```mermaid
 flowchart TB
   ODOM["ROS odometry messages"]
   LASER["ROS laser messages + laser-to-base TF"]
 
   subgraph NODE["Process 1: node.py / Lab3Node — ROS I/O and motion control"]
-    STATE["on_odom<br/>Validate time and frame<br/>state.py / StateTracker.update"]
-    SCAN["on_scan<br/>StateTracker.pose_at acquisition time<br/>geometry.py / process_scan"]
-    TICK["tick — every control_period<br/>Read newest Plan; keep latest state and scan<br/>Check freshness, faults, pause and worker health"]
+    STATE["node.py / Lab3Node.on_odom<br/>Validate time and frame<br/>Calls state.py / StateTracker.update"]
+    SCAN["node.py / Lab3Node.on_scan<br/>Calls state.py / StateTracker.pose_at<br/>Calls geometry.py / process_scan"]
+    TICK["node.py / Lab3Node.tick<br/>Runs every control_period<br/>Reads Plan, state and scan; checks readiness"]
     CONTROL["motion.py / MotionController.step_plan<br/>Check plan expiry; transform target<br/>Steer and check predicted stopping sweep"]
-    PUBLISH["publish<br/>Send cmd_vel from MotionResult<br/>Default result is zero velocity when gated"]
+    PUBLISH["node.py / Lab3Node.publish<br/>Converts types.py / MotionResult velocities to Twist<br/>Publishes cmd_vel; zero when motion is disallowed"]
     LOG["telemetry.py / Telemetry.record<br/>Queue measurements, command and diagnostics<br/>Background thread writes CSV"]
-    LIFECYCLE["stop_run / save_run / reset_run / close<br/>Pause, request save, restart or stop worker"]
+    LIFECYCLE["node.py / Lab3Node methods<br/>stop_run, save_run, reset_run, close<br/>Pause, request save, restart or stop worker"]
   end
 
-  subgraph IPC["Created by Lab3Node.start_worker — communication between processes"]
-    INCOMING["self.incoming — Queue with capacity 1<br/>Work: state, scan, now, blocked"]
-    OUTGOING["self.outgoing — Queue with capacity 1<br/>Plan: target, transform, created, map_revision, status, diagnostics"]
-    EVENTS["save_requested and stopping<br/>Multiprocessing events"]
+  subgraph IPC["node.py / Lab3Node.start_worker creates these runtime objects"]
+    INCOMING["node.py / self.incoming — Queue, capacity 1<br/>Carries worker.py / Work<br/>state, scan, now, blocked"]
+    OUTGOING["node.py / self.outgoing — Queue, capacity 1<br/>Carries types.py / Plan<br/>target, transform, created, map_revision, status, diagnostics"]
+    EVENTS["node.py / self.save_requested, self.stopping<br/>Multiprocessing events passed to worker.py"]
   end
 
   subgraph WORKER["Process 2: worker.py — started with multiprocessing spawn"]
-    LOOP["worker_main<br/>Own a NavigationEngine<br/>Handle events and consume newest available Work"]
-    ENGINE["NavigationEngine.step<br/>1. Require initial alignment in replay<br/>2. Mapper.update when map update is due<br/>3. Planner.step to keep or choose a target"]
-    SAVE["NavigationEngine.save<br/>RunMemory.save writes current evidence and experience"]
+    LOOP["worker.py / worker_main<br/>Owns worker.py / NavigationEngine<br/>Handles events and consumes newest available Work"]
+    ENGINE["worker.py / NavigationEngine.step<br/>Replay alignment via mapping.py / OccupancyMap.align<br/>Calls mapping.py / Mapper.update when due<br/>Calls planner.py / Planner.step"]
+    SAVE["worker.py / NavigationEngine.save<br/>Calls memory.py / RunMemory.save<br/>Writes current evidence and experience"]
   end
 
   ROBOT["Robot receives velocity command"]
-  SAVED[("Generated run file<br/>Path from config.run_file<br/>Not included in the repository")]
+  SAVED[("Generated run file<br/>Path configured by lab_config.py / Lab3Config.run_file<br/>Not included in the repository")]
 
   ODOM --> STATE
   LASER --> SCAN
@@ -60,8 +66,8 @@ flowchart TB
   INCOMING -->|worker receives Work without ROS callbacks| LOOP
   LOOP -->|engine.step with selected Work| ENGINE
   ENGINE -->|Plan with timing and alignment diagnostics| LOOP
-  LOOP -->|put_latest| OUTGOING
-  OUTGOING -->|take_latest at start of tick| TICK
+  LOOP -->|worker.py / put_latest| OUTGOING
+  OUTGOING -->|worker.py / take_latest called by tick| TICK
   TICK -->|fresh sensors and active worker| CONTROL
   CONTROL -->|MotionResult; blocked saved for next Work| TICK
   TICK -->|publish result every tick| PUBLISH
@@ -123,14 +129,68 @@ paused, nearly stationary robot and restarts the worker and pose history;
 
 ### How the two runs work
 
-| Stage | What the robot does | What it produces |
+Both launch files start the **same executable**, `lab3_controller`. Its entry in
+[`setup.py`](amr_ws/src/py_amr_ttb/setup.py) calls `lab3/node.py:main`, which
+constructs `Lab3Node`. The launch files select `run_mode`; they do not start two
+different controller implementations or automatically launch one run after the other.
+
+```mermaid
+flowchart TB
+  FIRST["First run: launch/lab3_go_to_goal.launch.py<br/>generate_launch_description sets run_mode = learn"]
+  SECOND["Second run: launch/lab3_replay.launch.py<br/>generate_launch_description sets run_mode = replay"]
+  ENTRY["setup.py / console_scripts<br/>lab3_controller calls lab3/node.py:main"]
+  NODEINIT["node.py / main and Lab3Node.__init__<br/>Load Lab3Config from lab_config.py<br/>Create sensor subscriptions, motion controller and timer"]
+  SPAWN["node.py / Lab3Node.start_worker<br/>Create queues and events; spawn worker.py / worker_main"]
+  INIT["worker.py / NavigationEngine.__init__<br/>Branch on config.run_mode"]
+
+  FIRST --> ENTRY
+  SECOND --> ENTRY
+  ENTRY --> NODEINIT --> SPAWN --> INIT
+
+  subgraph LEARN["First run: learn"]
+    NEW["worker.py / NavigationEngine.__init__<br/>New memory.py / RunMemory<br/>New mapping.py / Mapper with empty OccupancyMap"]
+    EXPLORE["planner.py / Planner constructed without a replay route<br/>No initial saved-map alignment required"]
+  end
+
+  subgraph REPLAY["Second run: replay"]
+    LOAD["memory.py / RunMemory.load<br/>Read generated file at config.run_file<br/>worker.py requires a completed route with at least two points"]
+    OPTIMIZE["replay.py / optimize_route<br/>Verify shortcuts and corner rounding against the loaded map"]
+    PREPARE["worker.py / NavigationEngine.__init__<br/>Keep loaded grid in mapping.py / Mapper<br/>Construct planner.py / Planner with optimized route<br/>Planner calls replay.py / speed_profile"]
+    ALIGN["worker.py / NavigationEngine.step on incoming scans<br/>Calls mapping.py / OccupancyMap.align with initial = True<br/>Return ALIGNMENT_REQUIRED without a target until accepted"]
+  end
+
+  INIT -->|learn| NEW --> EXPLORE
+  INIT -->|replay| LOAD --> OPTIMIZE --> PREPARE --> ALIGN
+  RUN["Shared runtime shown above<br/>node.py / tick checks commands using live sensors<br/>worker.py / NavigationEngine.step updates map and calls planner.py / Planner.step"]
+  EXPLORE --> RUN
+  ALIGN -->|accepted alignment initializes state.py / PoseEstimator| RUN
+```
+
+**During the first run**, `Planner.step()` has no saved route to follow. It uses
+`evaluate()` to score observed directions and map/memory queries to hold targets,
+follow walls or backtrack. `Mapper.update()` builds map evidence as new scans
+arrive, and `RunMemory.record()` stores the path. At completion, timeout, an
+explicit save request or shutdown, the worker attempts to save the run. Only a
+completed saved run can be used for replay.
+
+**During the second run**, startup loads the saved grid and recorded route,
+optimizes the route, and then waits for an accepted initial alignment. Once
+aligned, the same `Planner.step()` can use `replay_target()` and the route's speed
+caps. It still checks completion, stalls and recovery; if replay cannot supply a
+usable target, local direction selection can take over. `Mapper.update()` still
+runs, so the map is not frozen. `MotionController.step_plan()` still checks live
+scan clearance in `node.py`'s process. The robot does not simply play back saved
+velocity commands. Replay saves its new results to a separate `.replay.npz` path.
+
+| Execution | First run (`learn`) | Second run (`replay`) |
 | --- | --- | --- |
-| Observe | Combine 360-degree LiDAR with scan-time odometry; distinguish free, occupied, and unknown space | Usable travel distances, local pose, and map evidence |
-| Choose | Score headings across four front and four rear sections; favor goal progress and travel while penalizing turns and failed directions | A reachable point held between decisions |
-| Drive | Steer continuously using measured linear/angular velocity; check the predicted path through a complete stop | A velocity command that accounts for motion response |
-| Recover | Follow nearby walls when appropriate, or backtrack from a stall or confirmed capped pocket | A new approach and a penalty for the failed direction |
-| Learn | Record the route, map, and directional experience during the first run | A saved course for replay |
-| Replay | Align near the original start, trim detours through observed free space, and follow the improved route | A second run that still reacts to current LiDAR |
+| ROS startup and motion checks | `node.py` + `state.py` + `geometry.py` + `motion.py` | Same code and live sensor checks |
+| Worker entry | `worker.py / worker_main` | Same worker entry |
+| Initial map | New `mapping.py / OccupancyMap` | Saved grid restored by `memory.py / RunMemory.load` |
+| Route preparation | No replay route | `replay.py / optimize_route`, then `speed_profile` |
+| Initial scan alignment | Not required against a saved map | Required before ordinary mapping/planning proceeds |
+| Target selection | `planner.py / step` uses local scoring and recovery | Same method adds saved-route targeting, with local fallback and recovery |
+| Run output | Generated file at `Lab3Config.run_file` | Separate generated `.replay.npz` file |
 
 Unknown continuation remains a possible way forward. A region is rejected as
 closed only when the observed geometry supports that conclusion; unknown space
