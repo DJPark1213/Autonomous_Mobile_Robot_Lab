@@ -5,7 +5,8 @@ Use a separate process with bounded latest-work queues. NavigationEngine also ru
 directly in simulation; worker errors produce stop plans.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+import json
 from pathlib import Path
 from queue import Empty, Full
 import time
@@ -149,6 +150,8 @@ def worker_main(config, incoming, outgoing, stopping, save_requested):
     experience exists.
     """
     engine = None
+    captured = set()
+    capture_id = time.time_ns()
     try:
         engine = NavigationEngine(config)
         while not stopping.is_set():
@@ -160,7 +163,21 @@ def worker_main(config, incoming, outgoing, stopping, save_requested):
             except Empty:
                 continue
             newer = take_latest(incoming)
-            plan = engine.step(newer if newer is not None else work)
+            work = newer if newer is not None else work
+            plan = engine.step(work)
+            failure = 'blocked_motion' if work.blocked else plan.status
+            if failure in ('NO_LOCAL_ROUTE', 'blocked_motion') and failure not in captured:
+                captured.add(failure)
+                try:
+                    directory = Path(config.log_dir).expanduser()
+                    directory.mkdir(parents=True, exist_ok=True)
+                    path = directory / f'failure-{capture_id}-{failure}.json'
+                    payload = dict(config=asdict(config), work=asdict(work), plan=asdict(plan))
+                    path.write_text(json.dumps(payload, default=lambda value: value.tolist()),
+                                    encoding='utf-8')
+                    plan.diagnostics['failure_capture'] = str(path)
+                except Exception as error:
+                    plan.diagnostics['failure_capture_error'] = str(error)
             put_latest(outgoing, plan)
     except Exception as error:
         put_latest(outgoing, Plan(None, (0., 0., 0.), time.monotonic(), status='ERROR',

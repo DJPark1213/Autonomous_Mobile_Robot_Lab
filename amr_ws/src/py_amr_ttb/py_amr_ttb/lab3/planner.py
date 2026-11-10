@@ -10,7 +10,7 @@ import math
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
-from .geometry import compose, transform_points, observed_travel, scan_at_pose
+from .geometry import compose, transform_points, observed_travel, scan_at_pose, circles_observed
 from .replay import speed_profile
 from .types import Target, Plan
 
@@ -256,6 +256,20 @@ class Planner:
 
         # With no surviving section, try retreating; no return point means no target.
         if not options:
+            start_details = {}
+            circles_observed(local_scan, [[0., 0.]], c.radius,
+                             occupied_radius=c.radius, diagnostics=start_details)
+            probe_angles = np.linspace(-math.pi, math.pi, 72, endpoint=False)
+            probe_distance = max(.05, c.grid_resolution)
+            probe_centers = probe_distance * np.column_stack(
+                (np.cos(probe_angles), np.sin(probe_angles)))
+            step_details = {}
+            clear_steps = circles_observed(local_scan, probe_centers, c.radius,
+                                          occupied_radius=c.radius, diagnostics=step_details)
+            self.diagnostics.update(start_footprint=start_details,
+                                    first_step=step_details,
+                                    first_step_distance=probe_distance,
+                                    clear_first_steps=int(np.count_nonzero(clear_steps)))
             previous = self.memory.return_target(pose[:2], grid)
             angle = (
                 normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])

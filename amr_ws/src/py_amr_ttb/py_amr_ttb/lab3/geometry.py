@@ -373,6 +373,10 @@ def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=
             wide_sectors=int(np.count_nonzero(sector_widths > MAX_OBSERVED_GAP)),
             laser_origin=np.asarray(scan.origin).tolist(),
             occupied_radius=float(occupied_radius),
+            occupied_coverage_active=bool(occupied_radius > 0 and
+                                         np.linalg.norm(occupied_from_laser) < occupied_radius),
+            nearest_hits=hits[np.argsort(np.linalg.norm(
+                hits-np.asarray(occupied_center), axis=1))[:5]].tolist() if len(hits) else [],
             nearest_hit=float(np.linalg.norm(hits-np.asarray(occupied_center), axis=1).min())
             if len(hits) else None,
         )

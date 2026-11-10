@@ -201,6 +201,9 @@ class Lab3Node(Node):
         received_plan = take_latest(self.outgoing)
         if received_plan is not None:
             self.plan = received_plan
+            for key in ('failure_capture', 'failure_capture_error'):
+                if key in received_plan.diagnostics:
+                    self.get_logger().warning(key+' '+str(received_plan.diagnostics[key]))
         state, scan, plan = self.tracker.latest, self.scan, self.plan
         result = MotionResult(reason='WAITING_FOR_SENSORS')
         # Missing prerequisites must not leave the previous motion command active.
