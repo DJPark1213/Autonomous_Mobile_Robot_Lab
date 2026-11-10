@@ -38,6 +38,21 @@ class GeometryTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_rear_unknown_does_not_trap_starting_footprint(self):
+        values = np.full(360, np.inf)
+        values[:4] = np.nan
+        values[-4:] = np.nan
+        result = scan(self.cfg, values)
+        self.assertGreater(observed_travel(result, 0., self.cfg.radius, 1.5), 1.4)
+        self.assertEqual(observed_travel(result, math.pi, self.cfg.radius, 1.5), 0.)
+
+    def test_occupied_coverage_still_rejects_obstacle_hits(self):
+        values = np.full(360, np.inf)
+        values[180] = self.cfg.radius / 2
+        result = scan(self.cfg, values)
+        self.assertFalse(circles_observed(result, [[0., 0.]], self.cfg.radius,
+                                         occupied_radius=self.cfg.radius)[0])
+
     def test_no_return_is_observed_but_nan_is_unknown(self):
         values = np.full(360, np.inf)
         values[178:183] = np.nan

@@ -315,7 +315,7 @@ def _circle_sector_extents(scan, centers, radii):
     return sector_extents, sector_widths
 
 
-def circles_observed(scan, centers, radius):
+def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=(0., 0.)):
     """A clear center point does not prevent the robot's edge from
     hitting an obstacle or entering space the laser never observed.
 
@@ -346,18 +346,35 @@ def circles_observed(scan, centers, radius):
     sector_bounds = shorter_ranges * np.cos(sector_widths / 2)
     outside_sector = sector_extents < 0
     fits_observed_sector = known_sectors & (sector_extents <= sector_bounds + RANGE_TOLERANCE)
+    occupied_from_laser = np.asarray(occupied_center) - scan.origin
+    if occupied_radius > 0 and np.linalg.norm(occupied_from_laser) < occupied_radius:
+        # The current footprint supplies coverage only inside its boundary. Use
+        # the shortest ray exit over each sector, so unseen space beyond the
+        # footprint still rejects a proposed movement.
+        center = occupied_from_laser
+        distance = np.linalg.norm(center)
+        along = center[0]*np.cos(scan.angles) + center[1]*np.sin(scan.angles)
+        exits = along + np.sqrt(np.maximum(0., occupied_radius**2-distance**2+along**2))
+        occupied_bounds = np.minimum(exits, np.roll(exits, -1))
+        opposite = math.atan2(center[1], center[0]) + math.pi
+        contains_minimum = (opposite-scan.angles) % FULL_TURN <= sector_widths
+        occupied_bounds = np.where(contains_minimum, occupied_radius-distance, occupied_bounds)
+        fits_observed_sector |= sector_extents <= occupied_bounds + RANGE_TOLERANCE
     fully_observed = (outside_sector | fits_observed_sector).all(axis=1)
+    if occupied_radius > 0:
+        fully_observed |= (np.linalg.norm(centers-np.asarray(occupied_center), axis=1)
+                           + radii <= occupied_radius + RANGE_TOLERANCE)
     return misses_hits & fully_observed
 
 
-def circles_clear(scan, centers, radius):
+def circles_clear(scan, centers, radius, occupied_radius=0., occupied_center=(0., 0.)):
     """A motion segment must be rejected if even one of its covering
     footprints fails the clearance check.
 
     Combine circles_observed's results into one Boolean. The caller must provide
     circles that cover movement between positions, not just endpoints.
     """
-    return bool(circles_observed(scan, centers, radius).all())
+    return bool(circles_observed(scan, centers, radius, occupied_radius, occupied_center).all())
 
 
 def observed_travel(scan, heading, radius, cap, step=0.05):
@@ -375,7 +392,7 @@ def observed_travel(scan, heading, radius, cap, step=0.05):
     sample_distances = np.arange(0.0, contact_limit + 1e-9, step)
     direction = np.array([math.cos(heading), math.sin(heading)])
     centers = sample_distances[:, None] * direction
-    clear_footprints = circles_observed(scan, centers, radius)
+    clear_footprints = circles_observed(scan, centers, radius, occupied_radius=radius)
     blocked_indices = np.flatnonzero(~clear_footprints)
 
     if len(blocked_indices):

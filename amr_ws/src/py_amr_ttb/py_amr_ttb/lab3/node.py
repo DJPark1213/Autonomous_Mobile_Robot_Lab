@@ -64,9 +64,6 @@ class Lab3Node(Node):
 
     def __init__(self):
         super().__init__('lab3_controller')
-        self.sensor_clock_offset = self.declare_parameter('sensor_clock_offset', 0.0).value
-        if not math.isfinite(self.sensor_clock_offset):
-            raise ValueError('sensor_clock_offset must be finite')
         defaults = Lab3Config()
         values = {field.name: self.declare_parameter(field.name, getattr(defaults, field.name)).value
                   for field in fields(defaults)}
@@ -127,20 +124,6 @@ class Lab3Node(Node):
             queue.cancel_join_thread()
             queue.close()
 
-    def source_age(self, stamp):
-        """A message that arrived just now may contain a measurement
-        taken too long ago to use.
-
-        Compare stamp with the ROS clock; reject stale data or times beyond the
-        small future tolerance. Return age in seconds for monotonic freshness
-        accounting.
-        """
-        # The offset is controller time minus sensor time. Keep raw stamps for TF and odometry.
-        age = self.get_clock().now().nanoseconds*1e-9 - (stamp + self.sensor_clock_offset)
-        if not -.05 <= age <= self.cfg.sensor_timeout:
-            raise ValueError('Sensor acquisition timestamp is stale or in the future')
-        return max(0., age)
-
     def on_odom(self, message):
         """A changed frame, invalid pose or clock reset would
         invalidate the relationship between the robot and its existing map.
@@ -151,7 +134,7 @@ class Lab3Node(Node):
         now = time.monotonic()
         try:
             stamp = stamp_seconds(message.header.stamp)
-            received = now-self.source_age(stamp)
+            received = now
             if message.child_frame_id != self.cfg.base_frame:
                 raise ValueError('Odometry twist frame differs from configured base_frame')
             self.tracker.update(read_planar_pose(message), message.twist.twist.linear.x,
@@ -173,7 +156,7 @@ class Lab3Node(Node):
         now = time.monotonic()
         try:
             stamp = stamp_seconds(message.header.stamp)
-            received = now-self.source_age(stamp)
+            received = now
             if stamp <= self.last_scan_stamp:
                 raise ValueError('Non-increasing laser timestamp')
             if message.header.frame_id == self.cfg.base_frame:

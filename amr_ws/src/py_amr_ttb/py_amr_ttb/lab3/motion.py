@@ -108,7 +108,9 @@ class MotionController:
         segment_midpoints = (scan_frame_positions[:-1] + scan_frame_positions[1:]) / 2
         segment_lengths = np.linalg.norm(np.diff(scan_frame_positions, axis=0), axis=1)
         swept_radii = self.cfg.radius + segment_lengths / 2
-        is_clear = circles_clear(scan, segment_midpoints, swept_radii)
+        is_clear = circles_clear(scan, segment_midpoints, swept_radii,
+                                 occupied_radius=self.cfg.radius,
+                                 occupied_center=scan_frame_positions[0])
         return is_clear, trajectory
 
     def step_plan(self, state, scan, plan, now, dt):
