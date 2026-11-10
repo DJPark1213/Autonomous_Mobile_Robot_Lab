@@ -11,9 +11,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ssh -M -S "$socket" -fnN "$robot_host"
+echo "Connecting to TTB10 ($robot_host). Enter the SSH password if prompted."
+ssh -o ConnectTimeout=5 -M -S "$socket" -fnN "$robot_host"
+echo "Measuring the TTB10 clock offset."
 before=$(date +%s.%N)
-robot_time=$(ssh -S "$socket" -o BatchMode=yes "$robot_host" 'date +%s.%N')
+robot_time=$(timeout 5s ssh -S "$socket" -o BatchMode=yes -o ConnectTimeout=5 \
+    "$robot_host" 'date +%s.%N') || {
+    echo "Could not read the clock from TTB10." >&2
+    exit 1
+}
 after=$(date +%s.%N)
 
 if ! offset=$(LC_ALL=C awk -v before="$before" -v robot="$robot_time" -v after="$after" '
@@ -28,4 +34,5 @@ fi
 
 cleanup
 trap - EXIT
+echo "Launching Lab 3 with a clock offset of $offset seconds."
 exec ros2 launch py_amr_ttb lab3_go_to_goal.launch.py sensor_clock_offset:="$offset"
