@@ -88,7 +88,7 @@ class Lab3Node(Node):
             LaserScan, self.cfg.topic('scan'), self.on_scan, qos_profile_sensor_data)
         self.telemetry = Telemetry(self.cfg.log_dir, self.cfg.run_mode)
         self.start_worker()
-        self.services = [self.create_service(Trigger, '~/'+name, callback)
+        self._controller_services = [self.create_service(Trigger, '~/'+name, callback)
                          for name, callback in (('stop', self.stop_run), ('reset', self.reset_run),
                                                 ('save', self.save_run))]
         self.timer = self.create_timer(self.cfg.control_period, self.tick)
