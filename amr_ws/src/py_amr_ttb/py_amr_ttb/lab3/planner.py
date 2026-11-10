@@ -60,7 +60,12 @@ class Planner:
         room = observed_travel(scan, heading, c.radius, c.scoring_horizon,
                                step=max(.05, c.grid_resolution))
         travel = min(c.target_distance, room-c.target_reserve)
+        self.diagnostics['headings_checked'] = self.diagnostics.get('headings_checked', 0) + 1
+        self.diagnostics['max_observed_travel'] = max(
+            self.diagnostics.get('max_observed_travel', 0.), float(room))
+        self.diagnostics['required_travel'] = c.target_min_distance + c.target_reserve
         if travel < c.target_min_distance:
+            self.diagnostics['short_headings'] = self.diagnostics.get('short_headings', 0) + 1
             return None
         goal = (c.goal_x, c.goal_y)
         distance = math.dist(pose[:2], goal)
@@ -246,6 +251,8 @@ class Planner:
                 # section's winner only if the pocket test does not establish a cap.
                 if not grid.closed_ahead(pose[:2], pose[2]+best[2]):
                     options.append(best)
+                else:
+                    self.diagnostics['closed_sections'] = self.diagnostics.get('closed_sections', 0) + 1
 
         # With no surviving section, try retreating; no return point means no target.
         if not options:
@@ -258,7 +265,8 @@ class Planner:
                 Target(previous, 'BACKTRACK', reverse=abs(angle) > 2.2)
                 if previous else None
             )
-            return Plan(self.target, mapper.transform, now, grid.revision, 'NO_LOCAL_ROUTE')
+            return Plan(self.target, mapper.transform, now, grid.revision, 'NO_LOCAL_ROUTE',
+                        diagnostics=dict(self.diagnostics))
 
         # Select the entire winning candidate, so its score, room and heading stay paired.
         best, room, heading = max(options, key=lambda item: item[0].score)

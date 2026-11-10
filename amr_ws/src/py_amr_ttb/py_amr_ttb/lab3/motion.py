@@ -89,7 +89,7 @@ class MotionController:
     def __init__(self, config):
         self.cfg = config
 
-    def safe(self, state, scan, v, w, now):
+    def safe(self, state, scan, v, w, now, diagnostics=None):
         """Obstacles can lie between predicted positions or along the
         later braking path, not just at a command's endpoint.
 
@@ -110,7 +110,7 @@ class MotionController:
         swept_radii = self.cfg.radius + segment_lengths / 2
         is_clear = circles_clear(scan, segment_midpoints, swept_radii,
                                  occupied_radius=self.cfg.radius,
-                                 occupied_center=scan_frame_positions[0])
+                                 occupied_center=scan_frame_positions[0], diagnostics=diagnostics)
         return is_clear, trajectory
 
     def step_plan(self, state, scan, plan, now, dt):
@@ -246,7 +246,9 @@ class MotionController:
         # 10. No travel or alignment command qualified. Request zero velocity and
         # tell planning it is blocked. Even this stop has residual motion: report
         # EMERGENCY_STOP if the predicted braking path itself fails clearance.
-        safe, trajectory = self.safe(state, scan, 0., 0., now)
+        diagnostics = {}
+        safe, trajectory = self.safe(state, scan, 0., 0., now, diagnostics)
         return MotionResult(
             0., 0., 'BRAKE_PATH_BLOCKED' if safe else 'EMERGENCY_STOP', True, trajectory,
+            diagnostics,
         )

@@ -315,7 +315,7 @@ def _circle_sector_extents(scan, centers, radii):
     return sector_extents, sector_widths
 
 
-def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=(0., 0.)):
+def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=(0., 0.), diagnostics=None):
     """A clear center point does not prevent the robot's edge from
     hitting an obstacle or entering space the laser never observed.
 
@@ -364,17 +364,30 @@ def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=
     if occupied_radius > 0:
         fully_observed |= (np.linalg.norm(centers-np.asarray(occupied_center), axis=1)
                            + radii <= occupied_radius + RANGE_TOLERANCE)
+    if diagnostics is not None:
+        diagnostics.update(
+            footprints=len(centers),
+            hit_rejections=int(np.count_nonzero(~misses_hits)),
+            coverage_rejections=int(np.count_nonzero(~fully_observed)),
+            unknown_beams=int(np.count_nonzero(~scan.known)),
+            wide_sectors=int(np.count_nonzero(sector_widths > MAX_OBSERVED_GAP)),
+            laser_origin=np.asarray(scan.origin).tolist(),
+            occupied_radius=float(occupied_radius),
+            nearest_hit=float(np.linalg.norm(hits-np.asarray(occupied_center), axis=1).min())
+            if len(hits) else None,
+        )
     return misses_hits & fully_observed
 
 
-def circles_clear(scan, centers, radius, occupied_radius=0., occupied_center=(0., 0.)):
+def circles_clear(scan, centers, radius, occupied_radius=0., occupied_center=(0., 0.), diagnostics=None):
     """A motion segment must be rejected if even one of its covering
     footprints fails the clearance check.
 
     Combine circles_observed's results into one Boolean. The caller must provide
     circles that cover movement between positions, not just endpoints.
     """
-    return bool(circles_observed(scan, centers, radius, occupied_radius, occupied_center).all())
+    return bool(circles_observed(scan, centers, radius, occupied_radius, occupied_center,
+                                 diagnostics).all())
 
 
 def observed_travel(scan, heading, radius, cap, step=0.05):

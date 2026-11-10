@@ -7,6 +7,7 @@ one control callback while planning runs separately.
 
 from dataclasses import fields
 import math
+import json
 import multiprocessing as mp
 import time
 
@@ -76,6 +77,7 @@ class Lab3Node(Node):
         self.last_tick = time.monotonic()
         self.last_submit = float('-inf')
         self.last_reason = None
+        self.last_diagnostic_time = float('-inf')
         self.result = MotionResult()
         self.fault = None
         self.paused = False
@@ -220,6 +222,23 @@ class Lab3Node(Node):
         if result.reason != self.last_reason:
             self.get_logger().info(result.reason)
             self.last_reason = result.reason
+        failure_details = {}
+        if result.reason in ('NO_LOCAL_ROUTE', 'EMERGENCY_STOP', 'BRAKE_PATH_BLOCKED',
+                             'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN'):
+            failure_details = dict(
+                reason=result.reason,
+                odom_age=now-state.received if state else None,
+                scan_age=now-scan.received if scan else None,
+                plan_age=now-plan.created if plan else None,
+                measured_v=state.v if state else None,
+                measured_w=state.w if state else None,
+                sensor_timeout=self.cfg.sensor_timeout,
+                planner=plan.diagnostics if plan else {},
+                clearance=result.diagnostics,
+            )
+            if now-self.last_diagnostic_time >= 2.:
+                self.get_logger().warning('NAV_DIAGNOSTIC '+json.dumps(failure_details, default=str))
+                self.last_diagnostic_time = now
         if state is not None:
             pose = compose(plan.transform, state.pose) if plan else state.pose
             variance = plan.diagnostics.get('pose_variance') if plan else None
@@ -227,7 +246,9 @@ class Lab3Node(Node):
                                        measured_v=state.v, measured_w=state.w,
                                        command_v=result.v, command_w=result.w,
                                        mode=plan.target.mode if plan and plan.target else '',
-                                       reason=result.reason, plan_age=now-plan.created if plan else '',
+                                       reason=result.reason,
+                                       diagnostics=json.dumps(failure_details, default=str),
+                                       plan_age=now-plan.created if plan else '',
                                        worker_seconds=plan.diagnostics.get('worker_seconds', '') if plan else '',
                                        control_seconds=time.monotonic()-started,
                                        position_sigma=math.sqrt(max(variance[:2])) if variance else '',
@@ -289,9 +310,12 @@ class Lab3Node(Node):
         Publish zero, stop the worker, drain telemetry with a bounded wait and
         report logging problems.
         """
-        self.publish()
-        self.stop_worker()
-        self.telemetry.close()
+        try:
+            if self.context.ok():
+                self.publish()
+        finally:
+            self.stop_worker()
+            self.telemetry.close()
         if self.telemetry.error or self.telemetry.dropped:
             self.get_logger().warning(f'Telemetry: {self.telemetry.error}; dropped={self.telemetry.dropped}')
 

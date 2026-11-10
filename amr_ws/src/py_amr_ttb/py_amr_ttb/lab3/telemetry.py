@@ -14,7 +14,7 @@ import time
 
 FIELDS = ('time', 'x', 'y', 'yaw', 'measured_v', 'measured_w', 'command_v', 'command_w',
           'mode', 'reason', 'plan_age', 'worker_seconds', 'control_seconds',
-          'position_sigma', 'heading_sigma')
+          'position_sigma', 'heading_sigma', 'diagnostics')
 
 
 class Telemetry:

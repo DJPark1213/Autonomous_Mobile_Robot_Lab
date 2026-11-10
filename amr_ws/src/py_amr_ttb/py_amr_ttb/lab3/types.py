@@ -106,6 +106,7 @@ class MotionResult:
     reason: str = 'WAITING'
     blocked: bool = False
     trajectory: list = field(default_factory=list)
+    diagnostics: dict = field(default_factory=dict)
 
 
 @dataclass
