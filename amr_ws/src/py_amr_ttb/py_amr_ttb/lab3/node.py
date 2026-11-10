@@ -64,6 +64,9 @@ class Lab3Node(Node):
 
     def __init__(self):
         super().__init__('lab3_controller')
+        self.sensor_clock_offset = self.declare_parameter('sensor_clock_offset', 0.0).value
+        if not math.isfinite(self.sensor_clock_offset):
+            raise ValueError('sensor_clock_offset must be finite')
         defaults = Lab3Config()
         values = {field.name: self.declare_parameter(field.name, getattr(defaults, field.name)).value
                   for field in fields(defaults)}
@@ -132,7 +135,8 @@ class Lab3Node(Node):
         small future tolerance. Return age in seconds for monotonic freshness
         accounting.
         """
-        age = self.get_clock().now().nanoseconds*1e-9-stamp
+        # The offset is controller time minus sensor time. Keep raw stamps for TF and odometry.
+        age = self.get_clock().now().nanoseconds*1e-9 - (stamp + self.sensor_clock_offset)
         if not -.05 <= age <= self.cfg.sensor_timeout:
             raise ValueError('Sensor acquisition timestamp is stale or in the future')
         return max(0., age)
