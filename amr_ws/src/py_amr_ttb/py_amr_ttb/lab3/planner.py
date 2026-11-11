@@ -44,6 +44,9 @@ class Planner:
         self.blocked_time = 0.
         self.feedback_at = None
         self.recovery_stalled = False
+        self.wall_side = 0
+        self.wall_start = None
+        self.wall_clear_scan = None
 
     def commit(self, target, state, pose, now):
         if target is not None and (self.target is None or target.key != self.target.key):
@@ -153,6 +156,29 @@ class Planner:
         self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
+    def follow_wall(self, scan, pose):
+        """Select a forward segment alongside the nearest hit on the chosen side."""
+        c = self.cfg
+        best = None
+        for side in (self.wall_side,) if self.wall_side else (-1, 1):
+            points = scan.points[(scan.points[:, 0] >= -.1)
+                                 & (side*scan.points[:, 1] >= -.025)]
+            if not len(points):
+                continue
+            hit = points[np.argmin(np.linalg.norm(points, axis=1))]
+            tangent = normalize_angle(math.atan2(hit[1], hit[0])-side*math.pi/2)
+            for heading in np.linspace(-1.15, 1.15, 13):
+                room = observed_travel(scan, heading, c.radius, c.target_distance+.1)
+                travel = min(c.target_distance, room-.02)
+                if travel <= c.target_reached:
+                    continue
+                score = travel-.35*abs(normalize_angle(heading-tangent))-.15*abs(heading)
+                if best is None or score > best.score:
+                    local = (travel*math.cos(heading), travel*math.sin(heading))
+                    point = tuple(transform_points([local], pose)[0])
+                    best = Target(point, 'FOLLOW_WALL', score=float(score), wall_side=side)
+        return best
+
     def step(self, state, scan, mapper, now, blocked=False, motion_reason='', feedback_target=None):
         """A useful target can become blocked or lead back into a failed area.
 
@@ -219,6 +245,33 @@ class Planner:
         if self.target and self.target.mode == 'BACKTRACK' and not near and not failed_backtrack:
             return Plan(self.target, transform, now, revision)
 
+        if grid is None and (self.wall_side or sustained_block or no_progress):
+            goal = (c.goal_x, c.goal_y)
+            goal_clear = (self.wall_side and math.dist(pose[:2], self.wall_start) >= .25
+                          and self.observed_segment(pose, local_scan, goal))
+            if goal_clear and self.wall_clear_scan is None:
+                self.wall_clear_scan = scan.received
+            if not goal_clear:
+                self.wall_clear_scan = None
+            if goal_clear and scan.received > self.wall_clear_scan:
+                self.wall_side = 0
+                self.wall_clear_scan = None
+                self.commit(None, state, pose, now)
+                sustained_block = no_progress = False
+            else:
+                if (self.target is not None and self.target.mode == 'FOLLOW_WALL'
+                        and not near and not sustained_block and not no_progress):
+                    target = self.target
+                else:
+                    target = self.follow_wall(local_scan, pose)
+                if target is not None and not self.wall_side:
+                    self.wall_side = target.wall_side
+                    self.wall_start = pose[:2]
+                self.commit(target, state, pose, now)
+                return Plan(target, transform, now, revision,
+                            'RUNNING' if target else 'WALL_FOLLOW_BLOCKED',
+                            diagnostics={'wall_side': self.wall_side})
+
         # 4. If the goal is nearby and its whole approach is observed, aim there directly.
         if distance <= c.target_distance and not sustained_block and not no_progress:
             goal_heading = normalize_angle(
@@ -264,7 +317,7 @@ class Planner:
             if failed_backtrack:
                 self.target = None
                 self.recovery_stalled = True
-            previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
+            previous = None if grid is None or self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
 
             if previous is not None:
                 angle = normalize_angle(
@@ -380,7 +433,7 @@ class Planner:
                                     first_step=step_details,
                                     first_step_distance=probe_distance,
                                     clear_first_steps=int(np.count_nonzero(clear_steps)))
-            previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
+            previous = None if grid is None or self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
             if previous is None and not self.recovery_stalled and not sustained_block:
                 approaches = []
                 headings = np.unique(np.append(np.linspace(-math.pi/4, math.pi/4, 5),

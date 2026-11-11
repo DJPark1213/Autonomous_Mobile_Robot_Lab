@@ -211,7 +211,8 @@ class MotionController:
         reasons = [(top, 'SPEED_LIMIT' if top == c.max_linear else 'ROUTE_BEND')]
 
         # Reduce forward motion while pointing away from the desired direction.
-        reasons.append((top*max(0., math.cos(heading)), 'HEADING'))
+        if target.mode != 'FOLLOW_WALL':
+            reasons.append((top*max(0., math.cos(heading)), 'HEADING'))
 
         # Turning at speed produces lateral acceleration, approximately abs(v * w).
         if abs(desired_w) > .05:
@@ -266,6 +267,8 @@ class MotionController:
         details['attempted_commands'] = attempts
         slower = math.copysign(max(c.minimum_translation_speed, abs(v)/2), v)
         candidates = (v, slower) if abs(slower) < abs(v) else (v,)
+        if target.mode == 'FOLLOW_WALL' and v > 0.:
+            candidates = (v, .8*v, .6*v, .4*v, .2*v)
         for candidate in candidates:
             checks = {}
             safe, trajectory = self.safe(state, scan, candidate, w, now, checks)
