@@ -8,6 +8,37 @@ the driven route. The default goal is (10, 0) metres in the starting odometry
 frame. The run completes when the robot reaches the configured goal tolerance.
 Replay uses a completed route and checks shortcuts against current LiDAR.
 
+### Passage entry and open-space handoff
+
+Passage maneuvers retain precise alignment (0.01 rad), crawl speed (at most
+0.10 m/s), and the 0.06 m approach reserve from `ccf17e7`. The default maximum
+speed remains 0.30 m/s. Scans continue to feed planning during turns.
+
+During passage commitment, a different opening must improve the score by at
+least 0.10, have at least `target_reserve` clearance in the farther half of its
+approach, and remain within 0.25 m of the candidate on three distinct scans.
+A disappearing candidate resets confirmation. An invalid current route loses
+commitment immediately. Every candidate must support an aligned forward command
+as well as the current-motion checks; permission to rotate alone is insufficient.
+
+A direction-changing handoff resets alignment and brakes until measured linear
+speed is at most 0.025 m/s and angular speed is at most `angular_settle_speed`.
+Advancing a waypoint along the same direction does not restart this brake.
+After leaving passage mode, crawl speed remains until the observed area around
+the robot clears its footprint plus `target_reserve`. All commands retain the
+full stopping-sweep check.
+
+CSV diagnostics include planner candidate scores, rejected-candidate reasons,
+the selected target, confirmation count, and transition reason even during normal
+motion. Measured and commanded speeds remain separate CSV columns.
+
+Validation at the same 0.30 m/s cap: the 41 cm straight-corridor simulation takes
+212 control ticks (10.6 s) with both baseline and revised logic. In the new
+sideways-opening scenario, the baseline is unfinished after 700 ticks (35 s),
+while the revision reaches the goal in 282 ticks (14.1 s), maintaining footprint
+clearance and without reversing. These simulations do not replace a hardware
+retest of the actual passage.
+
 ## Connections and ownership
 
 ```mermaid

@@ -10,7 +10,7 @@ from dataclasses import replace
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
-from .geometry import inverse_points, scan_at_pose
+from .geometry import inverse_points, scan_at_pose, circles_observed
 from .types import MotionResult
 # Keep these imports available to existing callers of motion.approach/rollout.
 from .trajectory import approach, rollout, evaluate_trajectory, command_candidates, arc_obstacle_distance
@@ -31,6 +31,9 @@ class MotionController:
         self.turn_anchor = None
         self.previous_yaw = None
         self.turn_without_progress = 0.
+        self.active_target = None
+        self.handoff_pending = False
+        self.passage_exit_pending = False
 
     def safe(self, state, scan, v, w, now, diagnostics=None):
         """Validate a command through braking using the shared trajectory evaluator."""
@@ -96,6 +99,20 @@ class MotionController:
 
         if target.mode == 'DONE':
             return MotionResult(reason='DONE')
+        if self.active_target is not None and target.key != self.active_target.key:
+            old_bearing = math.atan2(self.active_target.point[1]-state.pose[1],
+                                    self.active_target.point[0]-state.pose[0])
+            new_bearing = math.atan2(target.point[1]-state.pose[1], target.point[0]-state.pose[0])
+            changed_direction = (abs(normalize_angle(new_bearing-old_bearing)) > .15
+                                 or target.reverse != self.active_target.reverse)
+            # Advancing a waypoint on the same route is not another handoff.
+            self.handoff_pending = (self.handoff_pending or changed_direction
+                                    and (self.aligning or self.active_target.mode == 'PASSAGE'))
+            self.passage_exit_pending = (self.passage_exit_pending
+                                         or self.active_target.mode == 'PASSAGE')
+            if changed_direction:
+                self.aligning = self.settling = False
+        self.active_target = target
         # Waypoint changes must not renew the turn allowance. Measure motion
         # in odometry so map corrections cannot count as translation.
         position = state.pose[:2]
@@ -111,6 +128,19 @@ class MotionController:
                 'turned_radians': self.turn_without_progress,
                 'displacement': math.dist(position, self.turn_anchor),
             })
+        if self.handoff_pending:
+            if abs(state.v) > .025 or abs(state.w) > c.angular_settle_speed:
+                details = dict(target=target.point, measured_v=state.v, measured_w=state.w)
+                clear, trajectory = self.safe(state, scan, 0., 0., now, details)
+                return MotionResult(reason='BRAKE_FOR_HANDOFF' if clear else 'EMERGENCY_STOP',
+                                    blocked=not clear, trajectory=trajectory, diagnostics=details)
+            self.handoff_pending = False
+        if self.passage_exit_pending:
+            local_scan = replace(scan_at_pose(scan, state.pose), coverage_time=now,
+                                 coverage_timeout=c.sensor_timeout)
+            if circles_observed(local_scan, [(0., 0.)], c.radius+c.target_reserve,
+                                occupied_radius=c.radius)[0]:
+                self.passage_exit_pending = False
         # Steering needs the target's distance and angle relative to the robot now.
         local = inverse_points([target.point], state.pose)[0]
         distance = float(np.linalg.norm(local))
@@ -152,8 +182,9 @@ class MotionController:
         # Collect linear-speed limits with their reasons, then use the lowest.
         # A replay bend may lower the ordinary cruise-speed ceiling.
         top = min(c.max_linear, c.max_linear if speed_cap is None else speed_cap)
-        if passage:
+        if passage or self.passage_exit_pending:
             top = min(top, .10, c.max_linear/3)
+        details['passage_exit_pending'] = self.passage_exit_pending
         curvature = 2*math.sin(heading)/max(distance, c.target_min_distance)
         if target.reverse:
             curvature = -curvature
@@ -184,10 +215,8 @@ class MotionController:
             local_scan = scan_at_pose(scan, state.pose)
             direction = -1. if target.reverse else 1.
             delay = c.command_latency+max(0., now-scan.received)+c.prediction_horizon
-            # A passage already uses crawl speed and must pass the full
-            # stopping sweep. The cruise maneuvering reserve can veto that
-            # crawl even when the verified stopping path fits.
-            reserve = 0. if passage else c.target_reserve
+            # Retain the working baseline's maneuvering reserve during crawl.
+            reserve = c.target_reserve
             lookahead = top*delay+top*top/(2*c.linear_braking)+reserve
             room = arc_obstacle_distance(
                 local_scan.points, curvature, direction, c.radius, lookahead)

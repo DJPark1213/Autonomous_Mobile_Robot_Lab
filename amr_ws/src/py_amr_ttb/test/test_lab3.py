@@ -396,10 +396,57 @@ class StateAndMotionTests(unittest.TestCase):
         old = Target((.3, .3), 'PASSAGE')
         planner.commit(old, state, state.pose, 0.)
         plan = planner.step(state, scan(self.cfg), None, 0.)
+        self.assertEqual(plan.target.key, old.key)
+        # Reusing a scan must not supply additional confirmation.
+        plan = planner.step(state, scan(self.cfg), None, 0.)
+        self.assertEqual(plan.target.key, old.key)
+        for i in (1, 2):
+            now = i*.2
+            state = replace(state, stamp=now, received=now)
+            plan = planner.step(state, scan(self.cfg, sequence=i, stamp=now), None, now)
         self.assertIsNotNone(plan.target)
         self.assertGreater(plan.target.point[0], .8)
         self.assertAlmostEqual(plan.target.point[1], 0.)
         self.assertNotEqual(plan.target.key, old.key)
+
+    def test_turning_reconsiders_narrow_opening_when_old_target_is_obstructed(self):
+        from py_amr_ttb.lab3.planner import Planner
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        cfg = replace(self.cfg, goal_x=1., goal_y=0.)
+        state = RobotState((0., 0., 0.), 0., .1, 0., 0.)
+        walls = [((-.5, y), (2., y)) for y in (-.205, .205)]
+        sensor = process_scan(raycast(walls, state.pose, count=1080),
+                              -math.pi, 2*math.pi/1080, .03, 6., cfg)
+        sensor = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+        planner = Planner(cfg, RunMemory(cfg))
+        old = Target((.3, .3), 'PASSAGE')
+        planner.commit(old, state, state.pose, 0.)
+        plan = planner.step(state, sensor, None, 0., motion_reason='ALIGN')
+        self.assertIsNotNone(plan.target)
+        self.assertNotEqual(plan.target.key, old.key)
+        self.assertEqual(plan.target.mode, 'PASSAGE')
+        self.assertGreater(plan.target.point[0], .8)
+        self.assertAlmostEqual(plan.target.point[1], 0., delta=.02)
+        self.assertTrue(planner.observed_segment(state.pose, sensor, plan.target.point))
+
+    def test_transient_opening_does_not_interrupt_passage(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), 0., .1, 0., 0.)
+        old = Target((.3, .3), 'PASSAGE')
+        planner.commit(old, state, state.pose, 0.)
+        plan = planner.step(state, scan(self.cfg), None, 0.)
+        self.assertEqual(plan.target.key, old.key)
+        with patch.object(planner, 'evaluate', return_value=None):
+            state = replace(state, received=.2, stamp=.2)
+            plan = planner.step(state, scan(self.cfg, sequence=1, stamp=.2), None, .2)
+        self.assertEqual(plan.target.key, old.key)
+        self.assertEqual(planner.opening_confirmations, 0)
+        for i in (2, 3):
+            now = i*.2
+            state = replace(state, received=now, stamp=now)
+            plan = planner.step(state, scan(self.cfg, sequence=i, stamp=now), None, now)
+            self.assertEqual(plan.target.key, old.key)
 
     def test_open_space_selection_keeps_competitive_current_target(self):
         from py_amr_ttb.lab3.planner import Planner
@@ -410,6 +457,35 @@ class StateAndMotionTests(unittest.TestCase):
         target = planner.select_local_target(state, scan(self.cfg), scan(self.cfg),
                                              state.pose, 0.)
         self.assertEqual(target.key, old.key)
+
+    def test_passage_commitment_tries_tight_alternatives_after_motion_rejection(self):
+        from py_amr_ttb.lab3.planner import Planner
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        from py_amr_ttb.lab3.types import MotionResult
+        state = RobotState((0., 0., 0.), 0., .1, 0., 0.)
+        walls = [((-.5, y), (2., y)) for y in (-.205, .205)]
+        sensor = process_scan(raycast(walls, state.pose, count=1080),
+                              -math.pi, 2*math.pi/1080, .03, 6., self.cfg)
+        sensor = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        old = Target((.5, 0.), 'PASSAGE')
+        planner.target = old
+        actual_step = MotionController.step
+
+        def reject_old(controller, robot, observed_scan, target, now, dt):
+            if math.dist(target.point, old.point) < 1e-9:
+                return MotionResult(reason='ALIGN_BLOCKED', blocked=True)
+            return actual_step(controller, robot, observed_scan, target, now, dt)
+
+        with patch.object(MotionController, 'step', reject_old):
+            target = planner.select_local_target(state, sensor, sensor, state.pose, 0.,
+                                                  hold_passage=True)
+        self.assertIsNotNone(target)
+        self.assertNotEqual(target.key, old.key)
+        self.assertEqual(target.mode, 'PASSAGE')
+        self.assertTrue(planner.diagnostics['current_target_observed'])
+        self.assertTrue(planner.diagnostics['selected_deferred'])
+        self.assertGreater(planner.diagnostics['motion_rejections'], 0)
 
     def test_obstacle_approach_caps_speed_before_emergency_braking(self):
         state = RobotState((0., 0., 0.), .15, 0., 0., 0.)
@@ -441,12 +517,46 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertGreater(result.v, 0.)
         self.assertLessEqual(result.v, self.cfg.max_linear/3)
 
-    def test_passage_crawl_uses_verified_room_inside_cruise_reserve(self):
+    def test_passage_handoff_brakes_rotation_and_resets_alignment(self):
+        controller = MotionController(self.cfg)
+        state = RobotState((0., 0., 0.), 0., .4, 0., 0.)
+        controller.step(state, scan(self.cfg), Target((.4, .3), 'PASSAGE'), 0., .05)
+        result = controller.step(state, scan(self.cfg), Target((1., 0.)), 0., .05)
+        self.assertEqual(result.reason, 'BRAKE_FOR_HANDOFF')
+        self.assertEqual((result.v, result.w), (0., 0.))
+        self.assertFalse(controller.aligning)
+        state = replace(state, w=0.)
+        result = controller.step(state, scan(self.cfg), Target((1., 0.)), 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertFalse(controller.handoff_pending)
+
+    def test_passage_exit_stays_slow_until_surroundings_are_observed_clear(self):
+        controller = MotionController(self.cfg)
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        walls = [((-.5, y), (2., y)) for y in (-.205, .205)]
+        sensor = scan(self.cfg, raycast(walls, state.pose))
+        controller.step(state, sensor, Target((.5, 0.), 'PASSAGE'), 0., .05)
+        target = Target((1., 0.))
+        controller.step(state, sensor, target, 0., .05)
+        state = replace(state, v=.1)
+        result = controller.step(state, sensor, target, 0., .05)
+        self.assertTrue(controller.passage_exit_pending)
+        self.assertLessEqual(result.v, .1)
+        ranges = np.full(360, np.inf)
+        ranges[:10] = np.nan
+        unknown = scan(self.cfg, ranges)
+        controller.step(state, unknown, target, 0., .05)
+        self.assertTrue(controller.passage_exit_pending)
+        result = controller.step(state, scan(self.cfg), target, 0., .05)
+        self.assertFalse(controller.passage_exit_pending)
+        self.assertGreater(result.v, .1)
+
+    def test_passage_crawl_preserves_baseline_approach_reserve(self):
         state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
         sensor = scan(self.cfg, raycast([((.24, -2.), (.24, 2.))], state.pose))
         controller = MotionController(self.cfg)
         result = controller.step(state, sensor, Target((.4, 0.), 'PASSAGE'), 0., .05)
-        self.assertGreater(result.v, 0.)
+        self.assertEqual(result.v, 0.)
         self.assertFalse(result.blocked)
         self.assertTrue(controller.safe(state, sensor, result.v, result.w, 0.)[0])
 
@@ -523,6 +633,38 @@ class StateAndMotionTests(unittest.TestCase):
             if plan.status == 'DONE' and abs(v) < .005:
                 break
         self.assertEqual(plan.status, 'DONE')
+
+    def test_narrow_entrance_opens_sideways_during_turn(self):
+        from py_amr_ttb.lab3.planner import Planner
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        from py_amr_ttb.lab3.simulate import plant, wall_distance
+        cfg = replace(self.cfg, goal_x=1.2, goal_y=.6)
+        walls = [((-.5, y), (.3, y)) for y in (-.205, .205)]
+        planner = Planner(cfg, RunMemory(cfg))
+        controller = MotionController(cfg)
+        pose, v, w = (0., 0., .12), 0., .15
+        planner.commit(Target((.6, 0.), 'PASSAGE'),
+                       RobotState(pose, v, w, 0., 0.), pose, 0.)
+        result = plan = None
+        for tick in range(700):
+            now = tick*.05
+            state = RobotState(pose, v, w, now, now)
+            sensor = process_scan(raycast(walls, pose, count=1080),
+                                  -math.pi, 2*math.pi/1080, .03, 6., cfg,
+                                  pose=pose, received=now, stamp=now, sequence=tick)
+            sensor = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+            if tick % 4 == 0:
+                plan = planner.step(state, sensor, None, now,
+                                    result.blocked if result else False,
+                                    result.reason if result else '',
+                                    plan.target.key if plan and plan.target else None)
+            result = controller.step_plan(state, sensor, plan, now, .05)
+            self.assertGreaterEqual(result.v, 0.)
+            pose, v, w = plant(pose, v, w, result, .05)
+            self.assertGreaterEqual(wall_distance(walls, pose[:2]), cfg.radius)
+            if plan.status == 'DONE' and abs(v) < .005:
+                break
+        self.assertEqual(plan.status, 'DONE', (pose, result.reason, plan.diagnostics))
 
     def test_explicit_high_speed_reaches_hardware_cap_in_open_space(self):
         self.assertEqual(Lab3Config().max_linear, .30)

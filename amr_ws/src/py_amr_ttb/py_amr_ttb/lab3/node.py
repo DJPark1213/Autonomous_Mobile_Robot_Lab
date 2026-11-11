@@ -327,7 +327,10 @@ class Lab3Node(Node):
                 if previous.sequence != scan.sequence
                 and 0 <= now-previous.received <= self.cfg.sensor_timeout))
         result = MotionResult(reason='WAITING_FOR_SENSORS')
-        controller_state = dict(aligning=self.controller.aligning, settling=self.controller.settling)
+        controller_state = dict(aligning=self.controller.aligning, settling=self.controller.settling,
+                                active_target=self.controller.active_target,
+                                handoff_pending=self.controller.handoff_pending,
+                                passage_exit_pending=self.controller.passage_exit_pending)
         # Missing prerequisites must not leave the previous motion command active.
         valid = (state is not None and scan is not None and self.tracker.fresh(now)
                  and 0 <= now-scan.received <= self.cfg.sensor_timeout)
@@ -398,7 +401,8 @@ class Lab3Node(Node):
                                        command_v=result.v, command_w=result.w,
                                        mode=plan.target.mode if plan and plan.target else '',
                                        reason=result.reason,
-                                       diagnostics=json.dumps(failure_details or result.diagnostics, default=str),
+                                       diagnostics=json.dumps(failure_details or dict(
+                                           result.diagnostics, planner=plan.diagnostics if plan else {}), default=str),
                                        plan_age=now-plan.created if plan else '',
                                        worker_seconds=plan.diagnostics.get('worker_seconds', '') if plan else '',
                                        control_seconds=time.monotonic()-started,
