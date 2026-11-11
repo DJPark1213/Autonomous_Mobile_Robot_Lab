@@ -165,7 +165,7 @@ calibration. Zero score weights are permitted.
 | --- | --- |
 | Speed and turn limits | `max_linear=0.30`, `max_angular=1.4`, `reverse_speed=0.08` |
 | Physical response | `linear_acceleration=0.4`, `linear_braking=0.5`, `angular_acceleration=1.8`, `angular_braking=2.2`, `command_latency=0.10` |
-| Footprint | `robot_radius=0.18`, `safety_margin=0.04`, extra `route_margin=0.10` for replay shortcuts |
+| Footprint | `robot_radius=0.18`, `safety_margin=0.01`, extra `route_margin=0.10` for replay shortcuts |
 | Timing | control 0.05 s, map 0.20 s, blockage threshold at least `decision_period=0.50` s. Sensors expire at 0.40 s and plans at 1.50 s. |
 | Lookahead | `scoring_horizon=1.5`, `target_distance=1.0`, `target_min_distance=0.15`, `target_reached=0.18` |
 | Score weights | goal .40, travel .30, clearance .10, heading .10, rotation .10, history .35 |

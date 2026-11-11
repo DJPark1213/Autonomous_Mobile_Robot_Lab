@@ -142,7 +142,7 @@ class Lab3Config:
     lateral_acceleration: float = 0.35
     # Clearance uses the physical body plus allowance for imperfect geometry.
     robot_radius: float = 0.18
-    safety_margin: float = 0.04
+    safety_margin: float = 0.01
     # Keep command checks frequent while bounding slower map/decision work.
     control_period: float = 0.05
     map_period: float = 0.20
@@ -275,7 +275,7 @@ class Lab3Config:
             raise ValueError('robot_namespace must be absolute without trailing slash')
         if self.max_linear > .31 or self.max_angular > 1.9:
             raise ValueError('Keep commands within TurtleBot 4 safety-enabled limits')
-        if self.reverse_speed > self.max_linear or self.radius < .20:
+        if self.reverse_speed > self.max_linear or self.robot_radius < .18 or self.safety_margin < .01:
             raise ValueError('Invalid reverse speed or footprint')
         if not 0 < self.scan_known_fraction <= 1 or self.free_threshold >= 0:
             raise ValueError('Invalid observation thresholds')
