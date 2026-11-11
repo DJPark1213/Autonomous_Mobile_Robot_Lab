@@ -389,6 +389,18 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertAlmostEqual(target.point[1], 0.)
         self.assertNotEqual(target.key, old.key)
 
+    def test_open_space_can_interrupt_committed_passage(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        old = Target((.3, .3), 'PASSAGE')
+        planner.commit(old, state, state.pose, 0.)
+        plan = planner.step(state, scan(self.cfg), None, 0.)
+        self.assertIsNotNone(plan.target)
+        self.assertGreater(plan.target.point[0], .8)
+        self.assertAlmostEqual(plan.target.point[1], 0.)
+        self.assertNotEqual(plan.target.key, old.key)
+
     def test_open_space_selection_keeps_competitive_current_target(self):
         from py_amr_ttb.lab3.planner import Planner
         planner = Planner(self.cfg, RunMemory(self.cfg))

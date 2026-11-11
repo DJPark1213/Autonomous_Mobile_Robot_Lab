@@ -253,7 +253,8 @@ class Planner:
                         best = target
         return best
 
-    def select_local_target(self, state, scan, local_scan, pose, now, keep_current=True):
+    def select_local_target(self, state, scan, local_scan, pose, now, keep_current=True,
+                            hold_passage=False):
         """Compare observed directions and the current target on every update."""
         c = self.cfg
         goal = (c.goal_x, c.goal_y)
@@ -283,6 +284,7 @@ class Planner:
                     candidates.append(self.target)
 
         ranked = []
+        points = local_scan.points
         for target in candidates:
             dx, dy = target.point[0]-pose[0], target.point[1]-pose[1]
             distance = math.hypot(dx, dy)
@@ -290,31 +292,44 @@ class Planner:
             # Sample clearance along the entire approach, including its entrance.
             positions = np.linspace(0., distance, 12)[:, None] * np.array(
                 [[math.cos(heading), math.sin(heading)]])
-            clearance = c.scoring_horizon
-            if len(local_scan.points):
-                clearance = max(0., float(np.linalg.norm(
-                    positions[:, None, :]-local_scan.points[None, :, :], axis=2).min())-c.radius)
+            clearance = np.full(len(positions), c.scoring_horizon)
+            if len(points):
+                clearance = np.maximum(0., np.linalg.norm(
+                    positions[:, None, :]-points[None, :, :], axis=2).min(axis=1)-c.radius)
+            # A nearby wall can limit the entry to every candidate. Score the
+            # space ahead as well so the common entry does not hide a wider exit.
+            exit_clearance = float(clearance[len(clearance)//2:].min())
+            if (hold_passage and target.key != self.target.key
+                    and exit_clearance < c.target_reserve):
+                continue
+            narrow = clearance < c.target_reserve
             cruise = c.max_linear
-            if clearance < c.target_reserve:
+            passage_speed = min(.10, cruise/3)
+            narrow_fraction = float(np.mean(narrow))
+            if narrow.any():
                 target = replace(target, mode='PASSAGE')
-                cruise = min(.10, cruise/3)
+                cruise = passage_speed
+            elif target.mode == 'PASSAGE':
+                target = replace(target, mode='FIRST_RUN')
+            travel_time = distance*((1-narrow_fraction)/c.max_linear
+                                    + narrow_fraction/passage_speed)
             turn_time = abs(heading)/c.max_angular
             braking_time = max(0., abs(state.v)-cruise)/c.linear_braking
             acceleration_time = abs(cruise-abs(state.v))/c.linear_acceleration
-            estimated_time = (distance/cruise + math.dist(target.point, goal)/c.max_linear
+            estimated_time = (travel_time + math.dist(target.point, goal)/c.max_linear
                               + turn_time + braking_time + acceleration_time/2)
             progress = math.dist(pose[:2], goal)-math.dist(target.point, goal)
             score = (c.weight_goal*progress/c.scoring_horizon
                      + c.weight_travel*distance/c.target_distance
-                     + c.weight_clearance*min(1., clearance/.35)
+                     + c.weight_clearance*min(1., exit_clearance/.35)
                      - .1*estimated_time
                      - c.weight_heading*abs(heading)/math.pi
                      - c.weight_history*self.memory.penalty(pose[:2], pose[2]+heading, now))
             if self.target is not None and target.key == self.target.key:
                 score += .05
-            ranked.append((score, target, heading, distance, estimated_time))
+            ranked.append((score, target, heading, distance, estimated_time, exit_clearance))
 
-        for score, target, heading, distance, estimated_time in sorted(ranked, key=lambda item: item[0], reverse=True):
+        for score, target, heading, distance, estimated_time, exit_clearance in sorted(ranked, key=lambda item: item[0], reverse=True):
             local = (distance*math.cos(heading), distance*math.sin(heading))
             probe = replace(target, point=tuple(transform_points([local], state.pose)[0]))
             command = MotionController(c).step(state, scan, probe, now, c.control_period)
@@ -330,7 +345,8 @@ class Planner:
                     continue
                 target = replace(target, mode='PASSAGE')
             self.diagnostics.update(candidate_count=len(candidates), score=score,
-                                    selection='OPEN_SPACE', heading=heading, estimated_time=estimated_time)
+                                    selection='OPEN_SPACE', heading=heading, estimated_time=estimated_time,
+                                    exit_clearance=exit_clearance)
             if target.mode != 'PASSAGE' and math.dist(target.point, goal) <= c.goal_tolerance:
                 return replace(target, mode='FINAL', score=score)
             return replace(target, score=score)
@@ -426,13 +442,15 @@ class Planner:
         if self.target and self.target.mode == 'BACKTRACK' and not near and not failed_backtrack:
             return Plan(self.target, transform, now, revision)
 
-        if (self.target is not None and self.target.mode == 'PASSAGE'
-                and not near and committed and not sustained_block and not no_progress):
-            return Plan(self.target, transform, now, revision, diagnostics=self.diagnostics)
-
         if grid is None and self.route is None:
-            target = self.select_local_target(state, scan, local_scan, pose, now,
-                                              keep_current=not sustained_block and not no_progress)
+            hold_passage = (self.target is not None and self.target.mode == 'PASSAGE'
+                            and not near and committed and not sustained_block and not no_progress)
+            target = self.select_local_target(
+                state, scan, local_scan, pose, now,
+                keep_current=not sustained_block and not no_progress,
+                hold_passage=hold_passage)
+            if target is None and hold_passage:
+                target = self.target
             if target is not None:
                 self.commit(target, state, pose, now)
                 return Plan(target, transform, now, revision, diagnostics=self.diagnostics)
