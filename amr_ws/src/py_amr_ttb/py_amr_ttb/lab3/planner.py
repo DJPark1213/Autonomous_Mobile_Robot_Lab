@@ -47,6 +47,7 @@ class Planner:
         self.feedback_at = None
         self.recovery_stalled = False
         self.wall_side = 0
+        self.wall_evaluated_at = -math.inf
         self.wall_start = None
         self.wall_clear_scan = None
         self.escape_targets = []
@@ -222,7 +223,7 @@ class Planner:
         """
         c = self.cfg
         best = None
-        for side in (self.wall_side,) if self.wall_side else (-1, 1):
+        for side in (-1, 1):
             points = scan.points[(scan.points[:, 0] >= -.1)
                                  & (side*scan.points[:, 1] >= -.025)]
             if not len(points):
@@ -235,7 +236,9 @@ class Planner:
                 travel = min(c.target_distance, room-.02)
                 if travel < .15:
                     continue
-                score = min(travel, .35)-.20*abs(normalize_angle(heading-tangent))-.45*abs(heading)
+                score = travel-.12*abs(normalize_angle(heading-tangent))-.20*abs(heading)
+                if side == self.wall_side:
+                    score += .05
                 if best is None or score > best.score:
                     local = (travel*math.cos(heading), travel*math.sin(heading))
                     point = tuple(transform_points([local], pose)[0])
@@ -249,6 +252,62 @@ class Planner:
                     if not command.blocked and (command.v > 0. or abs(command.w) > 0.):
                         best = target
         return best
+
+    def select_local_target(self, state, scan, local_scan, pose, now, keep_current=True):
+        """Compare observed directions and the current target on every update."""
+        c = self.cfg
+        goal = (c.goal_x, c.goal_y)
+        goal_heading = normalize_angle(math.atan2(goal[1]-pose[1], goal[0]-pose[0])-pose[2])
+        headings = list(np.linspace(-math.pi/2, math.pi/2, 13))
+        if abs(goal_heading) <= math.pi/2:
+            headings.append(goal_heading)
+        candidates = []
+        self.diagnostics = {}
+        for heading in np.unique(headings):
+            candidate = self.evaluate(heading, local_scan, pose, state, None, now)
+            if candidate is None:
+                candidate = self.evaluate(heading, local_scan, pose, state, None, now, approach=True)
+            if candidate is not None:
+                candidates.append(candidate[0])
+        if keep_current and self.target is not None and not self.target.reverse:
+            if math.dist(pose[:2], self.target.point) > self.target.arrival_distance(c.target_reached):
+                if self.observed_segment(pose, local_scan, self.target.point):
+                    candidates.append(self.target)
+
+        ranked = []
+        for target in candidates:
+            dx, dy = target.point[0]-pose[0], target.point[1]-pose[1]
+            distance = math.hypot(dx, dy)
+            heading = normalize_angle(math.atan2(dy, dx)-pose[2])
+            # Sample clearance along the entire approach, including its entrance.
+            positions = np.linspace(0., distance, 12)[:, None] * np.array(
+                [[math.cos(heading), math.sin(heading)]])
+            clearance = c.scoring_horizon
+            if len(local_scan.points):
+                clearance = max(0., float(np.linalg.norm(
+                    positions[:, None, :]-local_scan.points[None, :, :], axis=2).min())-c.radius)
+            progress = math.dist(pose[:2], goal)-math.dist(target.point, goal)
+            score = (c.weight_goal*progress/c.scoring_horizon
+                     + c.weight_travel*distance/c.target_distance
+                     + c.weight_clearance*min(1., clearance/.35)
+                     - c.weight_heading*abs(heading)/math.pi
+                     - c.weight_history*self.memory.penalty(pose[:2], pose[2]+heading, now))
+            if self.target is not None and target.key == self.target.key:
+                score += .05
+            ranked.append((score, target, heading, distance))
+
+        for score, target, heading, distance in sorted(ranked, key=lambda item: item[0], reverse=True):
+            local = (distance*math.cos(heading), distance*math.sin(heading))
+            probe = replace(target, point=tuple(transform_points([local], state.pose)[0]))
+            command = MotionController(c).step(state, scan, probe, now, c.control_period)
+            if command.blocked or not (command.v or command.w):
+                continue
+            self.diagnostics.update(candidate_count=len(candidates), score=score,
+                                    selection='OPEN_SPACE', heading=heading)
+            if math.dist(target.point, goal) <= c.goal_tolerance:
+                return replace(target, mode='FINAL', score=score)
+            return replace(target, score=score)
+        return None
 
     def step(self, state, scan, mapper, now, blocked=False, motion_reason='', feedback_target=None):
         """A useful target can become blocked or lead back into a failed area.
@@ -340,66 +399,14 @@ class Planner:
         if self.target and self.target.mode == 'BACKTRACK' and not near and not failed_backtrack:
             return Plan(self.target, transform, now, revision)
 
-        if grid is None and self.route is None and self.wall_start is None and self.target:
-            correcting = self.target.mode == 'FORWARD_CORRECTION'
-            if correcting and not near and not sustained_block and not no_progress:
-                return Plan(self.target, transform, now, revision, diagnostics=self.diagnostics)
-            if not correcting and not near:
-                dx, dy = self.target.point[0]-pose[0], self.target.point[1]-pose[1]
-                heading = normalize_angle(math.atan2(dy, dx)-pose[2])
-                opening = self.opening_approach(state, scan, local_scan, pose, now, heading)
-                if opening is not None:
-                    target, diagnostics = opening
-                    self.commit(target, state, pose, now)
-                    self.diagnostics = diagnostics
-                    return Plan(target, transform, now, revision, diagnostics=diagnostics)
-                threatened = (abs(heading) <= math.radians(15)
-                              and observed_travel(local_scan, heading, c.radius, .30) < .20)
-                if threatened or sustained_block or no_progress:
-                    correction = self.forward_correction(state, scan, local_scan, pose, now)
-                    if correction is not None:
-                        self.commit(correction, state, pose, now)
-                        self.diagnostics = {'recovery': 'FORWARD_CORRECTION'}
-                        return Plan(correction, transform, now, revision, diagnostics=self.diagnostics)
-
-        if grid is None and (self.wall_start is not None or sustained_block or no_progress):
-            if self.wall_start is None:
-                self.wall_start = pose[:2]
-            goal = (c.goal_x, c.goal_y)
-            goal_clear = ((not self.wall_side or math.dist(pose[:2], self.wall_start) >= .25)
-                          and self.observed_segment(pose, local_scan, goal))
-            if goal_clear and self.wall_clear_scan is None:
-                self.wall_clear_scan = scan.received
-            if not goal_clear:
-                self.wall_clear_scan = None
-            if goal_clear and scan.received > self.wall_clear_scan:
-                self.wall_side = 0
-                self.wall_start = None
-                self.wall_clear_scan = None
-                self.commit(None, state, pose, now)
-                sustained_block = no_progress = False
-                near = True
-            else:
-                if (self.target is not None and self.target.mode in ('FOLLOW_WALL', 'FORWARD_CORRECTION')
-                        and not near and not sustained_block and not no_progress):
-                    target = self.target
-                else:
-                    opening = self.opening_approach(state, scan, local_scan, pose, now, 0.)
-                    if opening is not None:
-                        target, diagnostics = opening
-                        self.commit(target, state, pose, now)
-                        self.diagnostics = diagnostics
-                        return Plan(target, transform, now, revision, diagnostics=diagnostics)
-                    target = self.follow_wall(local_scan, pose, state, scan, now)
-                if target is not None and not self.wall_side:
-                    self.wall_side = target.wall_side
+        if grid is None and self.route is None:
+            target = self.select_local_target(state, scan, local_scan, pose, now,
+                                              keep_current=not sustained_block and not no_progress)
+            if target is not None:
                 self.commit(target, state, pose, now)
-                if target is not None:
-                    return Plan(target, transform, now, revision,
-                                diagnostics={'wall_side': self.wall_side})
-                # Exhausted forward candidates must reach shared recovery below.
-                sustained_block = True
-                near = True
+                return Plan(target, transform, now, revision, diagnostics=self.diagnostics)
+            sustained_block = True
+            near = True
 
         # If the goal is nearby and its whole approach is observed, aim there directly.
         if distance <= c.target_distance and not sustained_block and not no_progress:
@@ -447,6 +454,7 @@ class Planner:
             if failed_backtrack:
                 self.target = None
                 self.recovery_stalled = True
+                self.escape_retry_at = now+c.decision_period
             previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
 
             if previous is not None:
@@ -461,7 +469,7 @@ class Planner:
                 self.recent.clear()
                 return Plan(self.target, transform, now, revision)
 
-        if stalled and not self.recovery_stalled and now >= self.escape_retry_at:
+        if stalled and now >= self.escape_retry_at:
             self.escape_retry_at = now+c.decision_period
             self.escape_targets = escape_sequence(state, scan, c, now, transform)
             if self.escape_targets:
@@ -593,7 +601,7 @@ class Planner:
                     self.commit(max(approaches, key=lambda target: target.score), state, pose, now)
                     return Plan(self.target, transform, now, revision,
                                 diagnostics=dict(self.diagnostics))
-            if previous is None and not self.recovery_stalled and now >= self.escape_retry_at:
+            if previous is None and now >= self.escape_retry_at:
                 self.escape_retry_at = now+c.decision_period
                 self.escape_targets = escape_sequence(state, scan, c, now, transform)
                 if self.escape_targets:

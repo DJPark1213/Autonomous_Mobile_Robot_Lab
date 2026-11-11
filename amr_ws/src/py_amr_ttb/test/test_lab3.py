@@ -376,6 +376,38 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertEqual(result.v, 0.)
         self.assertGreater(result.w, 0.)
 
+    def test_open_space_selection_replaces_wall_target_before_arrival(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        old = Target((.3, .3), 'FOLLOW_WALL')
+        planner.target = old
+        target = planner.select_local_target(state, scan(self.cfg), scan(self.cfg),
+                                             state.pose, 0.)
+        self.assertIsNotNone(target)
+        self.assertGreater(target.point[0], .8)
+        self.assertAlmostEqual(target.point[1], 0.)
+        self.assertNotEqual(target.key, old.key)
+
+    def test_open_space_selection_keeps_competitive_current_target(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        old = Target((1., 0.), 'FOLLOW_WALL')
+        planner.target = old
+        target = planner.select_local_target(state, scan(self.cfg), scan(self.cfg),
+                                             state.pose, 0.)
+        self.assertEqual(target.key, old.key)
+
+    def test_obstacle_approach_caps_speed_before_emergency_braking(self):
+        state = RobotState((0., 0., 0.), .15, 0., 0., 0.)
+        sensor = scan(self.cfg, raycast([((.35, -2.), (.35, 2.))], state.pose))
+        result = MotionController(self.cfg).step(state, sensor, Target((2., 0.)), 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertLess(result.v, state.v)
+        self.assertEqual(result.reason, 'OBSTACLE_APPROACH')
+        self.assertFalse(result.blocked)
+
     def test_tracking_can_steer_above_settle_speed(self):
         controller = MotionController(self.cfg)
         state = RobotState((0., 0., 0.), .1, .3, 0., 0.)
@@ -411,7 +443,7 @@ class StateAndMotionTests(unittest.TestCase):
         state = RobotState((0., 0., 0.), 0., 0., 1., 1.)
         with patch.object(planner, 'observed_segment', return_value=False), \
                 patch.object(planner, 'opening_approach', return_value=None), \
-                patch.object(planner, 'follow_wall', return_value=None), \
+                patch.object(planner, 'select_local_target', return_value=None), \
                 patch.object(memory, 'return_target', return_value=(-.4, 0.)) as retreat:
             plan = planner.step(state, scan(self.cfg, stamp=1.), None, 1.)
         retreat.assert_called_once()

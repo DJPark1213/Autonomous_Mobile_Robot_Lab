@@ -10,7 +10,7 @@ from dataclasses import replace
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
-from .geometry import inverse_points
+from .geometry import inverse_points, scan_at_pose, free_distances
 from .types import MotionResult
 # Keep these imports available to existing callers of motion.approach/rollout.
 from .trajectory import approach, rollout, evaluate_trajectory, command_candidates
@@ -163,6 +163,21 @@ class MotionController:
                 math.sqrt(2*c.linear_braking*max(0., distance-target.arrival_distance(c.goal_tolerance))),
                 'ARRIVAL',
             ))
+
+        # Anticipate an obstacle during near-straight travel. Reserve maneuvering
+        # room plus the command horizon, latency and braking distance.
+        if not self.aligning and abs(desired_w) <= .15:
+            local_scan = scan_at_pose(scan, state.pose)
+            direction = math.pi if target.reverse else 0.
+            delay = c.command_latency+max(0., now-scan.received)+c.prediction_horizon
+            lookahead = top*delay+top*top/(2*c.linear_braking)+c.target_reserve
+            room = float(free_distances(
+                local_scan.points, [direction], c.radius, lookahead)[0])
+            available = max(0., room-c.target_reserve)
+            braking_delay = c.linear_braking*delay
+            clearance_speed = math.sqrt(braking_delay**2+2*c.linear_braking*available)-braking_delay
+            reasons.append((clearance_speed, 'OBSTACLE_APPROACH'))
+            details.update(obstacle_travel=room, obstacle_speed_cap=clearance_speed)
 
         # Selecting the whole pair keeps the limiting speed tied to its explanation.
         desired, reason = min(reasons, key=lambda pair: pair[0])
