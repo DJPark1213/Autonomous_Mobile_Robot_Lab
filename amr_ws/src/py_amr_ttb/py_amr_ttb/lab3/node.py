@@ -7,6 +7,7 @@ one control callback while planning runs separately.
 
 from dataclasses import fields, replace
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import math
 import json
 import multiprocessing as mp
@@ -29,6 +30,7 @@ from .motion import MotionController
 from .state import StateTracker
 from .telemetry import Telemetry
 from .types import MotionResult
+from .coverage import prepare_coverage
 from .worker import Work, worker_main, put_latest, take_latest
 
 
@@ -74,6 +76,12 @@ class Lab3Node(Node):
         self.controller = MotionController(self.cfg)
         self.scan = self.plan = None
         self.scan_history = deque(maxlen=6)
+        self.coverage_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='coverage')
+        self.coverage_future = None
+        self.prepared_coverage = None
+        self.coverage_sequence = -1
+        self.coverage_epoch = 0
+        self.coverage_job_epoch = 0
         self.sequence = 0
         self.last_scan_stamp = float('-inf')
         self.last_tick = time.monotonic()
@@ -214,8 +222,24 @@ class Lab3Node(Node):
                 if key in received_plan.diagnostics:
                     self.get_logger().warning(key+' '+str(received_plan.diagnostics[key]))
         state, scan, plan = self.tracker.latest, self.scan, self.plan
+        if self.coverage_future is not None and self.coverage_future.done():
+            try:
+                prepared = self.coverage_future.result()
+                if self.coverage_job_epoch == self.coverage_epoch:
+                    self.prepared_coverage = prepared
+            except Exception as error:
+                self.get_logger().error('Coverage preparation failed: '+str(error))
+            self.coverage_future = None
+        if scan is not None and self.coverage_future is None and scan.sequence != self.coverage_sequence:
+            observations = tuple(previous for previous in self.scan_history
+                                 if 0 <= now-previous.received <= self.cfg.sensor_timeout)
+            if observations:
+                self.coverage_sequence = scan.sequence
+                self.coverage_job_epoch = self.coverage_epoch
+                self.coverage_future = self.coverage_pool.submit(prepare_coverage, observations)
         if scan is not None:
-            scan = replace(scan, history=tuple(
+            scan = replace(scan, coverage=self.prepared_coverage, coverage_time=now,
+                           coverage_timeout=self.cfg.sensor_timeout, history=tuple(
                 previous for previous in self.scan_history
                 if previous.sequence != scan.sequence
                 and 0 <= now-previous.received <= self.cfg.sensor_timeout))
@@ -229,6 +253,9 @@ class Lab3Node(Node):
             result.reason = 'PAUSED'
         elif not self.worker.is_alive():
             result.reason = 'WORKER_STOP: '+str(plan.diagnostics if plan else '')
+        elif valid and (scan.coverage is None or
+                        scan.coverage.select(now, self.cfg.sensor_timeout) is None):
+            result.reason = 'WAITING_FOR_COVERAGE'
         elif valid:
             if now-self.last_submit >= self.cfg.map_period:
                 if put_latest(self.incoming, Work(state, scan, now, self.result.blocked,
@@ -252,7 +279,7 @@ class Lab3Node(Node):
                              'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN',
                              'CONTROL_DEADLINE', 'SEARCHING_ROUTE', 'OBSERVE',
                              'TRANSLATION_COVERAGE', 'TRANSLATION_OBSTACLE',
-                             'OBSERVATION_EXHAUSTED', 'ALIGN_BLOCKED'):
+                             'OBSERVATION_EXHAUSTED', 'ALIGN_BLOCKED', 'WAITING_FOR_COVERAGE'):
             failure_details = dict(
                 reason=result.reason,
                 odom_age=now-state.received if state else None,
@@ -261,6 +288,8 @@ class Lab3Node(Node):
                 measured_v=state.v if state else None,
                 measured_w=state.w if state else None,
                 sensor_timeout=self.cfg.sensor_timeout,
+                coverage_age=now-scan.coverage.receipts[0] if scan and scan.coverage else None,
+                coverage_pending=self.coverage_future is not None,
                 planner=plan.diagnostics if plan else {},
                 clearance=result.diagnostics,
             )
@@ -326,6 +355,9 @@ class Lab3Node(Node):
         self.tracker = StateTracker(self.cfg)
         self.scan = self.plan = self.fault = None
         self.scan_history.clear()
+        self.coverage_epoch += 1
+        self.prepared_coverage = None
+        self.coverage_sequence = -1
         self.controller = MotionController(self.cfg)
         self.last_scan_stamp = self.last_submit = float('-inf')
         self.start_worker()
@@ -346,6 +378,7 @@ class Lab3Node(Node):
         finally:
             self.stop_worker()
             self.telemetry.close()
+            self.coverage_pool.shutdown(wait=False, cancel_futures=True)
         if self.telemetry.error or self.telemetry.dropped:
             self.get_logger().warning(f'Telemetry: {self.telemetry.error}; dropped={self.telemetry.dropped}')
 

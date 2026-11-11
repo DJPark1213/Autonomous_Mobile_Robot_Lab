@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import math
+import json
 import multiprocessing as mp
 from pathlib import Path
 from queue import Queue
@@ -248,6 +249,29 @@ class StateAndMotionTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_captured_coverage_seam_allows_forward_command(self):
+        from py_amr_ttb.lab3.types import Scan
+        data = json.loads((Path(__file__).parent/'data'/'lab3_coverage_seam.json').read_text())
+        def restore_scan(values):
+            values = dict(values)
+            values['history'] = tuple(restore_scan(item) for item in values.get('history', ()))
+            for name in ('angles', 'ranges', 'known', 'hits', 'origin'):
+                values[name] = np.asarray(values[name])
+            return Scan(**values)
+        sensor = restore_scan(data['scan'])
+        state = RobotState(**data['state'])
+        x, y, yaw = state.pose
+        target = Target((x+.5*math.cos(yaw), y+.5*math.sin(yaw)))
+        result = MotionController(self.cfg).step(state, sensor, target, data['now'], .05)
+        self.assertGreater(result.v, 0.)
+        self.assertNotIn(result.reason, ('OBSERVE', 'EMERGENCY_STOP'))
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        prepared = prepare_coverage((sensor, *sensor.history))
+        result = MotionController(self.cfg).step(
+            state, replace(sensor, coverage=prepared), target, data['now'], .05)
+        self.assertGreater(result.v, 0.)
+
+
     def test_obstacle_rejection_does_not_start_observation_turn(self):
         state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
         sensor = scan(self.cfg, raycast([((.225, -2.), (.225, 2.))], state.pose))
@@ -359,6 +383,48 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertTrue(estimator.correct((1.02, .01, .11)))
         self.assertLess(np.trace(estimator.covariance), variance)
         self.assertTrue(np.all(np.linalg.eigvalsh(estimator.covariance) > 0))
+
+
+class PreparedCoverageTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = Lab3Config()
+
+    def prepared(self, current, previous=(), now=0.):
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        return replace(current, coverage=prepare_coverage((current, *previous)),
+                       coverage_time=now, coverage_timeout=.4)
+
+    def test_unknown_wedge_is_not_filled(self):
+        values = np.full(360, 3.)
+        values[175:186] = np.nan
+        sensor = self.prepared(scan(self.cfg, values))
+        self.assertFalse(circles_observed(sensor, [[.5, 0.]], .22)[0])
+
+    def test_expiry_removes_old_coverage(self):
+        values = np.full(360, 3.)
+        values[175:186] = np.nan
+        current = scan(self.cfg, values, stamp=.3)
+        sensor = self.prepared(current, (scan(self.cfg, stamp=0.),), now=.3)
+        self.assertTrue(circles_observed(sensor, [[.5, 0.]], .22)[0])
+        self.assertFalse(circles_observed(replace(sensor, coverage_time=.5), [[.5, 0.]], .22)[0])
+        self.assertFalse(circles_observed(replace(sensor, coverage_time=.8), [[0., 0.]], .22)[0])
+
+    def test_new_obstacle_overrides_prepared_free_space(self):
+        free = scan(self.cfg)
+        values = np.full(360, 3.)
+        values[180] = .4
+        current = scan(self.cfg, values, stamp=.1)
+        prepared = self.prepared(free).coverage
+        current = replace(current, coverage=prepared, coverage_time=.1)
+        self.assertFalse(circles_observed(current, [[.4, 0.]], .22)[0])
+
+    def test_transformed_query_and_pickled_result(self):
+        import pickle
+        sensor = self.prepared(scan(self.cfg, pose=(2., 3., math.pi/2)))
+        shifted = scan_at_pose(sensor, (2., 3.2, math.pi/2))
+        shifted = replace(shifted, coverage=pickle.loads(pickle.dumps(shifted.coverage)))
+        self.assertTrue(circles_observed(shifted, [[.5, 0.]], .22)[0])
+
 
 
 class MappingAndReplayTests(unittest.TestCase):

@@ -105,6 +105,8 @@ class MotionController:
         accuracy.
         """
         scan_age = max(0.0, now - scan.received)
+        if scan.coverage is not None:
+            scan = replace(scan, coverage_time=now, coverage_timeout=self.cfg.sensor_timeout)
         history = tuple(previous for previous in scan.history
                         if 0 <= now-previous.received <= self.cfg.sensor_timeout)
         if len(history) != len(scan.history):
@@ -118,6 +120,10 @@ class MotionController:
         segment_midpoints = (scan_frame_positions[:-1] + scan_frame_positions[1:]) / 2
         segment_lengths = np.linalg.norm(np.diff(scan_frame_positions, axis=0), axis=1)
         swept_radii = self.cfg.radius + segment_lengths / 2
+        # A stopped circular body repeats the same footprint while yaw settles.
+        # Exact deduplication preserves every distinct swept region.
+        footprints = np.unique(np.column_stack((segment_midpoints, swept_radii)), axis=0)
+        segment_midpoints, swept_radii = footprints[:, :2], footprints[:, 2]
         is_clear = circles_clear(scan, segment_midpoints, swept_radii,
                                  occupied_radius=self.cfg.radius,
                                  occupied_center=scan_frame_positions[0], diagnostics=diagnostics)

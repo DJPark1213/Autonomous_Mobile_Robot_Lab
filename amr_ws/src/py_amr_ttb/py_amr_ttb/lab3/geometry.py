@@ -331,6 +331,15 @@ def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=
     """
     centers = np.atleast_2d(centers)
     radii = np.broadcast_to(np.asarray(radius), (len(centers),))
+    if scan.coverage is not None:
+        from .coverage import prepared_circles
+        selected = scan.coverage.select(scan.coverage_time, scan.coverage_timeout)
+        if selected is None:
+            if diagnostics is not None:
+                diagnostics['coverage_expired'] = True
+            return np.zeros(len(centers), dtype=bool)
+        return prepared_circles(scan, centers, radii, occupied_radius, occupied_center,
+                                diagnostics, selected)
     misses_hits = np.ones(len(centers), dtype=bool)
     hits = scan.points
     if len(hits):
@@ -431,11 +440,8 @@ def _covered_by_scans(sources, center, radius, occupied_radius, occupied_center,
     """Certify a disk by covering intersecting squares with observed disks.
 
     Each accepted square is wholly observed by one source or the occupied body.
-    Subdivide ambiguous squares down to 1 cm. Unresolved leaves fail closed.
+    Subdivide ambiguous squares below 2 mm. Unresolved leaves fail closed.
     """
-    for source in sources[1:]:
-        if circles_observed(source, [center], radius, occupied_radius, occupied_center)[0]:
-            return True
     # Reject obvious holes cheaply before attempting the full area certificate.
     # Passing these probes alone never authorizes a footprint.
     bearings = np.linspace(-math.pi, math.pi, 128, endpoint=False)
@@ -475,7 +481,7 @@ def _covered_by_scans(sources, center, radius, occupied_radius, occupied_center,
         for index in np.flatnonzero(uncached):
             cache[keys[index]] = bool(covered[index])
         unresolved = np.flatnonzero(~covered)
-        if np.any(half_sizes[unresolved] <= .005):
+        if np.any(half_sizes[unresolved] <= .001):
             return False
         children = []
         for index in unresolved:

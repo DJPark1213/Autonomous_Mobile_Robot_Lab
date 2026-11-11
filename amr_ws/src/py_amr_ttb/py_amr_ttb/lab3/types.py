@@ -34,6 +34,9 @@ class Scan:
     pose: tuple
     sequence: int
     history: tuple = ()
+    coverage: object = None
+    coverage_time: float = 0.
+    coverage_timeout: float = .4
 
     @property
     def endpoints(self):

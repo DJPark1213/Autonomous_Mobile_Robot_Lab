@@ -185,6 +185,19 @@ acceleration and braking settings are estimates that require measurement.
 
 ### Live timing and incomplete scan coverage
 
+Live coverage preparation runs in one background thread using Shapely/GEOS.
+There is at most one preparation job. Incoming scans continue to update while it
+runs, and the next job takes the newest observations. Known angular sectors form
+conservative polygons; nested unions are prepared for each successive observation
+expiry. The control callback selects an eligible union and queries it instead of
+subdividing coverage cells. It also checks current obstacle hits against each
+stopping footprint. Planning receives the same prepared representation, expressed
+in starting odometry coordinates. No eligible result produces WAITING_FOR_COVERAGE.
+Run reset invalidates results submitted before the reset.
+
+Install the added ROS dependency with rosdep, or install python3-shapely on Ubuntu.
+Offline callers without prepared coverage retain the NumPy geometry path.
+
 Sensor freshness uses local monotonic receipt time. Robot timestamps still align
 odometry, scans, and TF. A constant robot-to-PC clock offset requires no SSH or
 NTP calibration. Receipt time cannot detect transport delay before arrival.

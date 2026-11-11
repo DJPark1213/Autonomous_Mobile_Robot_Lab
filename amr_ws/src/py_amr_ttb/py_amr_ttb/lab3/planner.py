@@ -130,7 +130,8 @@ class Planner:
         # 1. Targets use map coordinates; direction checks use the robot's frame now.
         c, grid = self.cfg, mapper.grid
         pose = compose(mapper.transform, state.pose)
-        scan = replace(scan, history=tuple(previous for previous in scan.history
+        scan = replace(scan, coverage_time=now, coverage_timeout=c.sensor_timeout,
+                       history=tuple(previous for previous in scan.history
                        if 0 <= now-previous.received <= c.sensor_timeout))
         local_scan = scan_at_pose(scan, state.pose)
         self.memory.record(pose, now)
@@ -366,9 +367,8 @@ class Planner:
             and abs(normalize_angle(heading-goal_heading)) < .04
         ):
             best = Target((c.goal_x, c.goal_y), 'FINAL', best.score)
-        elif room < c.wall_trigger:
-            best.mode = 'FOLLOW_WALL'
-            best.wall_side = -1 if heading >= 0 else 1
+        # A short route still uses the heading whose footprint was checked.
+        # Replacing it with a wall tangent would invalidate that route selection.
 
         # The plan carries this target's map transform so later corrections cannot
         # make control interpret it using a different coordinate relationship.
