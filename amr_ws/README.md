@@ -6,31 +6,10 @@ Commands below assume this directory is your working directory.
 
 ## Lab 3: learn and replay
 
-Lab 3 uses LiDAR and odometry to explore an unknown obstacle course, save its map
-and trajectory, and improve the next run. The current finish assumption is
-`(10, 0)` metres in the initial robot frame, with a default cruise limit of
-0.30 m/s. See the
-[Lab 3 module diagram, behavior, and tuning guide](src/py_amr_ttb/py_amr_ttb/lab3/README.md).
-
-```mermaid
-flowchart LR
-  S["LiDAR + odometry"] --> G["geometry.py + state.py<br/>Observed space and motion"]
-  G --> M["mapping.py<br/>Map and corrected pose"]
-  M --> P["planner.py<br/>Target and recovery"]
-  R["memory.py<br/>First-run experience"] <--> P
-  R --> F["Saved course"]
-  M --> F
-  F --> E["replay.py<br/>Improved second-run route"]
-  E --> P
-  P --> C["motion.py<br/>Steering and stopping checks"]
-  G -->|fresh sensor data| C
-  C --> V["node.py publishes cmd_vel"]
-```
-
-`node.py` runs the control timer; `worker.py` owns mapping and planning in a
-separate process. Both use `Lab3Config`, and pose handling reuses `odom_utils.py`.
-See the [full module diagram](../README.md#lab-3-module-diagram) for process
-boundaries, timing, and the connections to configuration and logging.
+Lab 3 uses LiDAR and odometry to navigate an obstacle course and save its
+driven route. The default goal is (10, 0) metres in starting odometry and the
+default speed limit is 0.30 m/s. See the
+[Lab 3 module diagram and tuning guide](src/py_amr_ttb/py_amr_ttb/lab3/README.md).
 
 Build and start the first run:
 
@@ -53,8 +32,8 @@ position and heading, and start replay from a sourced terminal:
 ros2 launch py_amr_ttb lab3_replay.launch.py robot_namespace:=/TTB10
 ```
 
-Replay waits for a confident scan alignment, uses the saved course, and checks
-the current scan before commanding motion. It saves results to
+Replay checks saved waypoints against the current scan. Map-backed recordings
+use scan alignment at startup. Replay saves results to
 `course.replay.npz`, preserving `course.npz`.
 
 Stop and queue a save from another sourced terminal:
@@ -76,9 +55,6 @@ python3 -m unittest discover -s src/py_amr_ttb/test -p test_lab3.py -v
 PYTHONPATH=src/py_amr_ttb python3 -m py_amr_ttb.lab3.simulate \
   --scenario pocket --two-runs --output ../output/lab3-pocket
 ```
-
-All 28 Lab 3 tests passed locally. ROS transport, TF/QoS, physical braking,
-LiDAR timing, and actual course performance still need robot validation.
 
 ## Earlier labs
 

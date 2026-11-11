@@ -106,12 +106,10 @@ class NavigationEngine:
         self.planner = Planner(config, self.memory, route)
 
     def step(self, work):
-        """Replay targets are meaningless before starting alignment,
-        and later targets need an up-to-date map relationship.
+        """Plan from current sensing and blocked feedback.
 
-        Wait for accepted initial alignment, update mapping at its configured
-        period, then plan with current state and blocked feedback. Return a Plan
-        with timing and uncertainty diagnostics; save once on completion or timeout.
+        Map-backed replay aligns before planning and updates its map periodically.
+        Save the run on completion or timeout.
         """
         started = time.perf_counter()
         if not self.aligned:

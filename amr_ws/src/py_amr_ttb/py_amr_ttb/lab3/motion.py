@@ -158,7 +158,7 @@ class MotionController:
         target.point uses starting odometry; v is m/s and w is rad/s. Each return
         ends this decision with a MotionResult for node.py to publish.
         """
-        # 1. Old measurements cannot support a new motion prediction.
+        # Old measurements cannot support a new motion prediction.
         # Invalid timing, no target or a completed run requests zero velocity.
         c = self.cfg
         if (
@@ -188,7 +188,7 @@ class MotionController:
                 'turned_radians': self.turn_without_progress,
                 'displacement': math.dist(position, self.turn_anchor),
             })
-        # 2. Steering needs the target's distance and angle relative to the robot now.
+        # Steering needs the target's distance and angle relative to the robot now.
         local = inverse_points([target.point], state.pose)[0]
         distance = float(np.linalg.norm(local))
         heading = math.atan2(local[1], local[0])
@@ -198,7 +198,7 @@ class MotionController:
         if target.reverse:
             heading = normalize_angle(heading-math.pi)
 
-        # 4. Larger heading errors request faster turning, up to the angular limit.
+        # Larger heading errors request faster turning, up to the angular limit.
         desired_w = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
         forward_recovery = target.mode in ('FOLLOW_WALL', 'FORWARD_CORRECTION')
         steer_while_moving = forward_recovery and not target.reverse and abs(heading) <= math.pi/4
@@ -209,7 +209,7 @@ class MotionController:
             was_aligning or self.settling)
         details = dict(heading_error=heading, target_distance=distance,
                        translation_rejection=None)
-        # 5. Collect linear-speed limits with their reasons, then use the lowest.
+        # Collect linear-speed limits with their reasons, then use the lowest.
         # A replay bend may lower the ordinary cruise-speed ceiling.
         top = min(c.max_linear, c.max_linear if speed_cap is None else speed_cap)
         reasons = [(top, 'SPEED_LIMIT' if top == c.max_linear else 'ROUTE_BEND')]
@@ -222,8 +222,7 @@ class MotionController:
         if abs(desired_w) > .05:
             reasons.append((c.lateral_acceleration/abs(desired_w), 'TURN'))
 
-        # Braking at every intermediate target would turn continuous travel into
-        # stop-and-go motion. Only the final goal adds a stopping-distance limit.
+        # Final goals and short approaches cap speed by the remaining stopping distance.
         if target.mode in ('FINAL', 'APPROACH'):
             reasons.append((
                 math.sqrt(2*c.linear_braking*max(0., distance-target.arrival_distance(c.goal_tolerance))),
@@ -233,7 +232,7 @@ class MotionController:
         # Selecting the whole pair keeps the limiting speed tied to its explanation.
         desired, reason = min(reasons, key=lambda pair: pair[0])
 
-        # 6. Recovery may reverse slowly; a large heading error requires alignment first.
+        # Recovery may reverse slowly; a large heading error requires alignment first.
         if target.reverse:
             desired = -min(desired, c.reverse_speed)
             reason = 'REVERSE'
@@ -246,22 +245,21 @@ class MotionController:
                 desired_w = 0.
                 reason = 'BRAKE_FOR_TURN'
 
-        # Complete angular braking before accelerating along the waypoint.
-        # This phase emits a stop request; rollout still checks residual motion.
+        # After stationary alignment, check residual rotation before accelerating.
         if self.settling and abs(state.w) > c.angular_settle_speed:
             clear, trajectory = self.safe(state, scan, 0., 0., now, details)
             return MotionResult(reason='BRAKE_ROTATION' if clear else 'EMERGENCY_STOP',
                                 blocked=not clear, trajectory=trajectory, diagnostics=details)
         self.settling = False
 
-        # 7. Normal command changes respect acceleration and braking limits.
+        # Normal command changes respect acceleration and braking limits.
         # Start from measured speeds, since the previous command may not be achieved yet.
         v = approach(state.v, desired, c.linear_acceleration, c.linear_braking, dt)
         w = approach(state.w, desired_w, c.angular_acceleration, c.angular_braking, dt)
         v = float(np.clip(v, -c.reverse_speed, c.max_linear))
         w = float(np.clip(w, -c.max_angular, c.max_angular))
 
-        # 8. Validate the command and at most one slower translation.
+        # Try slower translation when the requested stopping sweep is blocked.
         if self.aligning:
             clear, trajectory = self.safe(state, scan, v, w, now, details)
             return MotionResult(v if clear else 0., w if clear else 0.,
@@ -284,11 +282,11 @@ class MotionController:
                 return MotionResult(candidate, w, reason if candidate == v else 'CLEARANCE',
                                     False, trajectory, details)
 
-        # 9. Translation failure is distinct from heading alignment.
+        # Translation failure is distinct from heading alignment.
         rejection = 'OBSTACLE' if details.get('hit_rejections', 0) else 'COVERAGE'
         details['translation_rejection'] = rejection
 
-        # 10. No travel or alignment command qualified. Request zero velocity and
+        # No travel or alignment command qualified. Request zero velocity and
         # tell planning it is blocked. Even this stop has residual motion: report
         # EMERGENCY_STOP if the predicted braking path itself fails clearance.
         diagnostics = {}

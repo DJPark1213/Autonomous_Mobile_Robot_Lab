@@ -23,7 +23,7 @@ class RunMemory:
     record of the completed run.
 
     Route rows are [x, y, yaw, time]; attempt rows are [x, y, heading, count, time].
-    Coordinates use odometry for route-only runs and the map frame for legacy replay.
+    Coordinates use odometry for route-only runs and the map frame for map-backed replay.
     Live timestamps use monotonic time.
     """
 
@@ -150,8 +150,7 @@ class RunMemory:
                     or attempts.ndim != 2 or attempts.shape[1] != 5 or not np.isfinite(attempts).all()):
                 raise ValueError('Invalid saved route or history')
             memory.route, memory.attempts = route.tolist(), attempts.tolist()
-            # An old monotonic timestamp is not comparable with the new run's
-            # clock; age saved failures instead of treating them as fresh.
+            # Age saved failures because monotonic timestamps are local to a run.
             for attempt in memory.attempts:
                 attempt[4] = -config.history_decay
             memory.complete = bool(metadata['complete'])

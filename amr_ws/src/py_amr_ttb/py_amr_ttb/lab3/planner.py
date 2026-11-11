@@ -152,13 +152,16 @@ class Planner:
             selected = self.route_index
         self.route_index = max(self.route_index, selected)
         point = tuple(self.route[selected])
-        # A saved route may now be obstructed; its speed cap cannot override
-        # current LiDAR checks in the motion controller.
+        # The speed cap anticipates bends. The controller checks live clearance.
         self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
     def opening_approach(self, state, scan, local_scan, pose, now, reference):
-        """Aim between nearby opposing returns and check the initial driving arc."""
+        """Opposing LiDAR returns can bound a narrow opening.
+
+        Return a centered odometry target and diagnostics if the initial
+        forward command clears the stopping sweep.
+        """
         c = self.cfg
         points = local_scan.points
         for distance in (.45, .65, .85):
@@ -188,7 +191,11 @@ class Planner:
         return None
 
     def forward_correction(self, state, scan, local_scan, pose, now):
-        """Try the smallest forward heading change with room to steer and stop."""
+        """A blocked line can still leave room for a small forward turn.
+
+        Check headings in order of increasing turn angle. Return the first
+        target with observed travel and a clear forward stopping sweep.
+        """
         c = self.cfg
         controller = MotionController(c)
         for degrees in (0, 5, -5, 10, -10, 15, -15):
@@ -205,7 +212,11 @@ class Planner:
         return None
 
     def follow_wall(self, scan, pose, state, source_scan, now):
-        """Select a forward segment alongside the nearest hit on the chosen side."""
+        """A consistent obstacle side keeps recovery moving along the wall.
+
+        Rank forward segments by usable travel and steering effort. Return
+        the highest-scoring target with a clear initial stopping sweep.
+        """
         c = self.cfg
         best = None
         for side in (self.wall_side,) if self.wall_side else (-1, 1):
@@ -237,7 +248,7 @@ class Planner:
         Each return ends this decision. The returned Plan carries the target's
         map transform; motion control checks velocity commands separately.
         """
-        # 1. Targets use map coordinates; direction checks use the robot's frame now.
+        # Targets use map coordinates; direction checks use the robot's frame now.
         c = self.cfg
         grid = mapper.grid if mapper is not None else None
         transform = mapper.transform if mapper is not None else (0., 0., 0.)
@@ -257,7 +268,7 @@ class Planner:
             self.started = self.progress_at = now
             self.anchor = state.pose[:2]
 
-        # 2. Finish once the goal is reached, or stop an overlong run.
+        # Finish once the goal is reached, or stop an overlong run.
         distance = math.hypot(c.goal_x-pose[0], c.goal_y-pose[1])
         if self.memory.complete or distance <= c.goal_tolerance:
             self.memory.complete = True
@@ -267,7 +278,7 @@ class Planner:
         if now-self.started > c.max_runtime:
             return Plan(None, transform, now, revision, 'TIME_LIMIT')
 
-        # 3. Complete an unblocked retreat before choosing another exploration target.
+        # Complete an unblocked retreat before choosing another exploration target.
         # Otherwise the planner could send the robot straight back into the same pocket.
         near = (
             self.target is None
@@ -354,7 +365,7 @@ class Planner:
                             'RUNNING' if target else 'WALL_FOLLOW_BLOCKED',
                             diagnostics={'wall_side': self.wall_side})
 
-        # 4. If the goal is nearby and its whole approach is observed, aim there directly.
+        # If the goal is nearby and its whole approach is observed, aim there directly.
         if distance <= c.target_distance and not sustained_block and not no_progress:
             goal_heading = normalize_angle(
                 math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2]
@@ -371,7 +382,7 @@ class Planner:
                         diagnostics=dict(self.diagnostics, holding_for='TARGET_COMMITMENT',
                                          commitment_remaining=self.target_committed_until-now))
 
-        # 5. Recognize getting stuck: little movement, a loop, or an observed dead end.
+        # Recognize getting stuck: little movement, a loop, or an observed dead end.
         # Progress means displacement from an anchor, not necessarily toward the goal.
         # Ignore very recent nearby samples: normal slow travel is not a revisit.
         self.recent.append((now, *pose[:2]))
@@ -389,7 +400,7 @@ class Planner:
         if motion_reason in ('WAITING_FOR_FRESH_PLAN', 'WAITING_FOR_SENSORS',
                              'CONTROL_DEADLINE', 'COMMAND_EXPIRED', 'SEARCHING_ROUTE'):
             stalled = capped or sustained_block or failed_backtrack
-        # 6. Remember the failed direction and seek a verified path to an earlier point.
+        # Remember the failed direction and seek a verified path to an earlier point.
         if stalled:
             direction = (
                 math.atan2(self.target.point[1]-pose[1], self.target.point[0]-pose[0])
@@ -414,7 +425,7 @@ class Planner:
                 self.recent.clear()
                 return Plan(self.target, transform, now, revision)
 
-        # 7. Keep a useful target between decision times to avoid constant steering changes.
+        # Keep a useful target between decision times to avoid constant steering changes.
         # Arrival, blockage or stalled progress allows an earlier decision.
         near = (
             self.target is None
@@ -428,7 +439,7 @@ class Planner:
 
         self.diagnostics = {}
 
-        # 8. During replay, prefer a verified saved-route target while progress is healthy.
+        # During replay, prefer a verified saved-route target while progress is healthy.
         if self.route is not None and not sustained_block and not stalled:
             target = self.replay_target(pose, local_scan, grid)
             if target is not None:
@@ -438,7 +449,7 @@ class Planner:
                     diagnostics=self.diagnostics,
                 )
 
-        # 9. Otherwise, search all angular sections for a useful local direction.
+        # Otherwise, search all angular sections for a useful local direction.
         goal_heading = normalize_angle(
             math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2]
         )
@@ -552,7 +563,7 @@ class Planner:
         # Select the entire winning candidate, so its score, room and heading stay paired.
         best, room, heading = max(options, key=lambda item: item[0].score)
 
-        # 10. Identify the final goal for arrival braking.
+        # Identify the final goal for arrival braking.
         if (
             distance <= c.target_distance
             and room >= distance+c.target_reserve

@@ -3,15 +3,10 @@
 [Repository overview](../../../../../README.md#lab-3-maze-escape) ·
 [Workspace quick start](../../../../README.md#lab-3-learn-and-replay)
 
-This replaces the old potential-field, wander, follow-me, and coordinated Lab 3
-controllers. It uses the existing `../odom_utils.py` for starting-frame pose math
-and `Lab3Config` in `../lab_config.py` for every run's settings. Lab 1 and Lab 2
-controllers are unchanged.
-
-The assumed goal is `(10, 0)` metres in the first run's starting frame. There is
-no camera or prepared map. Completion means reaching that coordinate within the
-configured tolerance; **open space alone is not an exit detector**. Position and
-orientation near the original start are needed for the second run.
+Go-to-goal uses LiDAR and odometry to navigate an obstacle course and record
+the driven route. The default goal is (10, 0) metres in the starting odometry
+frame. The run completes when the robot reaches the configured goal tolerance.
+Replay uses a completed route and checks shortcuts against current LiDAR.
 
 ## Connections and ownership
 
@@ -22,13 +17,12 @@ flowchart LR
   S --> N[node.py: fresh sensor snapshot]
   G --> N
   N -->|latest snapshot only| W[worker.py: separate process]
-  W --> M[mapping.py: occupancy evidence + alignment]
-  M --> P[planner.py: held target / recovery]
+  W --> P[planner.py: opening approach and wall following]
   R[memory.py: trajectory + failed directions] <--> P
   R --> F[Atomic saved run]
-  F --> E[replay.py: verified shortcuts + rounding]
+  F --> E[replay.py: saved route and bend speed]
   E --> P
-  P -->|target + map transform| C[motion.py: steering + stopping sweep]
+  P -->|held target| C[motion.py: steering + stopping sweep]
   N -->|fresh scan and measured v,w| C
   C --> V[cmd_vel]
   C --> T[telemetry.py: asynchronous CSV]
@@ -41,12 +35,12 @@ flowchart LR
 | `node.py` | ROS subscriptions, timestamp and TF checks, one velocity publisher, bounded worker queues, stop/save/reset services. Transforms a held map target into the continuous odometry frame. |
 | `state.py` | `StateTracker.update()` keeps signed measured motion in the initial frame; `pose_at()` interpolates laser-time pose. `PoseEstimator` predicts a planar pose/covariance from odometry and applies gated Kalman corrections from accepted scan matches. |
 | `geometry.py` | `process_scan()` preserves hits, valid no-return beams, and unknowns; `observed_travel()` checks robot-width travel; frame transforms and swept-circle tests. |
-| `mapping.py` | `integrate()` accumulates bounded free/occupied evidence once per scan; `closed_ahead()` checks for an observed capped pocket; `align()` accepts only sufficiently strong, unambiguous local scan matches. |
-| `planner.py` | Scores usable headings, holds reachable targets, commits to backtracking, and tracks replay waypoints. |
-| `motion.py` | Uses measured velocities and validates one acceleration-limited translation per cycle; predicts latency and a complete stop. Separates heading alignment, angular braking, and translation rejection. |
+| `mapping.py` | For map-backed replay, `integrate()` accumulates bounded free/occupied evidence once per scan; `closed_ahead()` checks for an observed capped pocket; `align()` accepts only sufficiently strong, unambiguous local scan matches. |
+| `planner.py` | Scores forward headings, checks opening approaches and wall-following arcs, and tracks replay waypoints. |
+| `motion.py` | Ramps linear and angular commands from measured velocities and checks candidate arcs through a full stop. |
 | `memory.py` | Samples the trajectory, penalizes failed directions, chooses a verified return point, and atomically saves/loads an NPZ without pickle. |
 | `replay.py` | Trims loops and detours by estimated travel/turn time; checks full-footprint observed space, repairs tight corners locally, rounds corners when validated, and anticipates bend speeds. |
-| `worker.py` | Owns mapping/planning/persistence in a separate process. Provides the same `NavigationEngine` to simulation. |
+| `worker.py` | Runs planning and persistence in a separate process. Simulation uses the same `NavigationEngine`. |
 | `telemetry.py` | Bounded background CSV writer recording measured/commanded speeds, modes, slowdown reasons, plan age, and callback timing. |
 | `simulate.py` | Independent finite-response robot plant, ray-cast LiDAR, four regression courses, optional two-run comparison. |
 | `plot.py` | Plots recorded CSV trajectory and measured versus commanded velocities. |
@@ -79,25 +73,20 @@ are easy to distinguish.
 
 ## Decision behavior
 
-1. Consider all 360 degrees: four front sections and four rear sections by default.
-   Sample headings within each section and retain its best usable candidate.
-   If a section has no usable coarse candidate, screen headings spaced at most
-   0.5 degrees apart against obstacle hits. Check the best fine heading for full
-   footprint coverage before it can become a target.
-2. A candidate must have an observed, robot-width route to its target. Unknown
-   continuation is eligible for exploration, but unknown cells are never declared
-   safe just because a beam is missing.
-3. Reward goal progress, observed travel, and clearance. Penalize heading change,
-   change from measured angular velocity, and previously failed directions.
-   A long path can win before its cap becomes visible.
-4. Hold the odometry waypoint through alignment and travel. Reconsider on arrival,
-   sustained blockage, or a stall. The controller checks every command against
-   current sensing.
-5. Remember failed directions and use recent odometry waypoints to backtrack
-   when the current scan supports the return path. Reversing is limited to this
-   recovery behavior and uses the rear scan too.
-6. If no usable route exists, stop and keep observing. The overall runtime
-   limit bounds the run.
+1. Score observed forward segments using goal progress, clearance, steering
+   effort, and recent failed directions. Hold the selected odometry waypoint
+   through brief interruptions.
+2. Check for opposing LiDAR returns ahead. Aim between them when the midpoint
+   offers a clear approach and the controller can execute its initial arc.
+   If the current line loses clearance, check small forward heading corrections.
+3. On sustained blockage or a stall, pick a side and follow the obstacle forward.
+   Keep that side while checking for an opening. A blocked forward sweep requests
+   zero velocity while the planner reassesses current scans.
+4. Ramp steering and translation together for recovery turns up to 45 degrees.
+   Try the highest permitted command first and check slower commands when
+   necessary. Every command must leave room for the full stopping sweep.
+5. Exit wall following when two scans show a clear route to the goal after
+   progress around the obstacle. Reach the goal tolerance to complete the run.
 
 ## Build and run on the ROS machine
 
@@ -129,7 +118,7 @@ Both launches accept `run_file:=/absolute/path/course.npz`. The default is
 It records the driven route and remembers failed directions for recovery.
 For replay of a new recording, start from the same position and heading in the
 same odometry coordinates. Replay checks each shortcut against current LiDAR.
-Older map-based recordings still use initial LiDAR alignment and can report
+Map-backed recordings use initial LiDAR alignment and can report
 `ALIGNMENT_REQUIRED` if the starting pose is ambiguous.
 Replay saves its result as `course.replay.npz`. Incomplete learning runs save to
 `course.incomplete.npz`. A completed learning run is saved at `course.npz`.
@@ -165,8 +154,8 @@ calibration. Zero score weights are permitted.
 | --- | --- |
 | Speed and turn limits | `max_linear=0.30`, `max_angular=1.4`, `reverse_speed=0.08` |
 | Physical response | `linear_acceleration=0.4`, `linear_braking=0.5`, `angular_acceleration=1.8`, `angular_braking=2.2`, `command_latency=0.10` |
-| Footprint | `robot_radius=0.18`, `safety_margin=0.01`, extra `route_margin=0.10` for replay shortcuts |
-| Timing | control 0.05 s, map 0.20 s, blockage threshold at least `decision_period=0.50` s. Sensors expire at 0.40 s and plans at 1.50 s. |
+| Footprint | `robot_radius=0.18`, `safety_margin=0.01`, extra `route_margin=0.10` for map-backed replay shortcuts |
+| Timing | control 0.05 s, worker submission 0.20 s, blockage threshold at least `decision_period=0.50` s. Sensors expire at 0.40 s and plans at 1.50 s. |
 | Lookahead | `scoring_horizon=1.5`, `target_distance=1.0`, `target_min_distance=0.15`, `target_reached=0.18` |
 | Score weights | goal .40, travel .30, clearance .10, heading .10, rotation .10, history .35 |
 | Slower candidate | `minimum_translation_speed=0.01` m/s is a provisional floor for the fallback candidate. Measure the base's useful speed before tuning it. |
@@ -212,40 +201,15 @@ recent obstacle hits. Unresolved coverage cells fail closed. A 1 mm tolerance at
 the already-occupied boundary accommodates tiny pose drift, while obstacle
 contact retains the configured clearance radius.
 
-Heading search rotates through angular sections across worker updates, yielding
-after a section when the search has spent half the map period. This is a soft
-budget: a section and mapping can exceed it. SEARCHING_ROUTE means another
-section will be examined on a subsequent update. Selection can now accept the
-best candidate from a partial search rather than ranking every section first.
+Heading search rotates through forward sections across worker updates. The
+worker yields between sections when the search reaches its time budget.
+`SEARCHING_ROUTE` means the search is still in progress.
 
-Worker submissions respect map_period even after blockage. A single target
-commitment interval holds a waypoint through transient stops. Alignment begins at
-rotate_threshold and ends below alignment_tolerance (0.15 rad). When aligned,
-After deliberate alignment, BRAKE_ROTATION requests zero until measured angular
-speed falls below angular_settle_speed (0.15 rad/s). Normal tracking can steer
-continuously. If the initial translation fails, the controller checks one slower
-candidate. When both fail, it reports TRANSLATION_COVERAGE or TRANSLATION_OBSTACLE
-and checks the predicted stop. The next cycle can drive when fresh coverage supports it.
-TURN_WITHOUT_PROGRESS requests zero after one revolution of accumulated turning
-without 0.05 m of displacement in odometry. Waypoint changes do not renew the
-allowance. Moving the base by that distance or resetting the run clears the stop.
-
-The planner accumulates blocked samples for the attempted waypoint across brief
-interruptions. It tracks progress in odometry and scales the required displacement
-for slower reverse travel. A stalled backtrack is released, and RECOVERY_STALLED
-reports that the subsequent search found no verified alternative. The planner
-checks for known caps at both the current position and candidate waypoint. Replay
-can rejoin its next saved waypoint with the normal footprint check when the extra
-shortcut margin is unavailable. Live stopping-sweep checks still apply.
-
-New waypoints must exceed target_reached by at least 0.05 m as well as satisfy
-target_min_distance. When there is no regular or backtrack route, the planner
-can select an APPROACH waypoint ahead with 0.10 m of verified usable travel.
-The approach looks up to 0.35 m ahead, reserves 0.02 m, and uses a 0.025 m arrival tolerance so the
-robot can take a small step and check the opening again. The footprint and
-stopping-sweep checks apply throughout. NAV_TARGET logs target changes. CSV diagnostics include
-heading error, target distance, and translation rejection.
-Sensor and compute waiting are distinguished from route blockage.
+`NAV_TARGET` logs waypoint changes. Opening diagnostics record the estimated
+width, heading, and accepted linear and angular command. Motion diagnostics
+record heading error, target distance, clearance checks, and translation
+rejections. `TURN_WITHOUT_PROGRESS` requests zero after one revolution of
+accumulated turning without 0.05 m of odometry displacement.
 
 Plans expire from their input snapshot time. completed_at and
 input_age_at_completion record computation delay separately. Before publishing,
@@ -259,7 +223,7 @@ has not been established.
 Exact motion-failure JSON captures include scan history, the rejected result, and
 its state/scan/plan/time/dt, controller state, and attempted translation commands.
 The telemetry writer saves them beside the matching
-CSV. Worker snapshots of the following cycle are no longer used for that purpose. NAV_DIAGNOSTIC includes coverage,
+CSV. NAV_DIAGNOSTIC includes coverage,
 obstacle, history, timing, and planner-search details. Captured-frame replay and
 unit tests do not establish sustained progress under live ROS scheduling.
 
@@ -270,12 +234,6 @@ python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p test_lab3.py -v
 PYTHONPATH=amr_ws/src/py_amr_ttb python3 -m py_amr_ttb.lab3.simulate \
   --scenario pocket --two-runs --output output/lab3-pocket
 ```
-
-The implementation was checked locally with 28 passing Lab 3 tests. The existing
-Lab 1/2 and shared-utility tests also passed; seven existing plotting checks were
-skipped because Matplotlib was unavailable to that test environment. Python
-compilation and the Git whitespace check passed. Formatting and ament lint have
-not been verified in this environment.
 
 The simulator also offers `straight`, `obstacle`, and `corner`. It reports elapsed
 simulated time, actual wall clearance, peak speed, modes, and host worker timing.
@@ -288,19 +246,6 @@ Hardware CSV logs are written under `log_dir`. Plot with:
 ros2 run py_amr_ttb lab3_plot ~/amr_lab3_runs/learn-TIMESTAMP.csv
 ```
 
-Local matching and a three-state Kalman update improve pose consistency when
-geometry is distinctive. Odometry advances the pose and grows its covariance;
-accepted scan matches reduce uncertainty after an innovation check. Increases
-in reported odometry variance supplement configurable process noise. This is
-**not full SLAM or a calibrated uncertainty bound**: the map and measurements
-are correlated, and old poses are not globally adjusted. Occupancy evidence
-is a practical confidence accumulator, not a calibrated probability guarantee.
-Scans currently use one acquisition pose, not per-beam motion compensation.
-These limitations and the physical acceleration/braking values must be evaluated
-on the robot before treating near-limit speed as reliable. The runtime keeps
-the robot's existing firmware safety behavior enabled.
-
-ROS build/transport, full ament lint checks, real TF/QoS, LiDAR timing, and robot
-trials are separate validation steps; passing offline tests does not establish
-them. Tune measured braking and latency before increasing speed or shrinking
-the footprint margin.
+Map-backed replay uses local scan matching and a planar pose filter. Route-only
+recordings use starting odometry coordinates. Scans use a single acquisition pose.
+The simulator measures course completion and clearance under its own plant model.
