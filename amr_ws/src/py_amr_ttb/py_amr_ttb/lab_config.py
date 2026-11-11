@@ -142,7 +142,7 @@ class Lab3Config:
     lateral_acceleration: float = 0.35
     # Clearance uses the physical body plus allowance for imperfect geometry.
     robot_radius: float = 0.18
-    safety_margin: float = 0.04
+    safety_margin: float = 0.01
     # Keep command checks frequent while bounding slower map/decision work.
     control_period: float = 0.05
     map_period: float = 0.20
