@@ -138,9 +138,13 @@ class MotionController:
         passage = target.mode == 'PASSAGE'
         steer_while_moving = not passage and not self.aligning and abs(heading) < 1.4
         was_aligning = self.aligning
-        alignment_limit = min(c.alignment_tolerance, .01) if passage else c.alignment_tolerance
-        self.aligning = not steer_while_moving and abs(heading) >= (
-            alignment_limit if was_aligning or passage else 1.4)
+        # Require precise alignment before leaving a stationary turn, but
+        # let slow curved tracking correct small errors during the passage.
+        if passage:
+            alignment_limit = min(c.alignment_tolerance, .01 if was_aligning else .12)
+        else:
+            alignment_limit = c.alignment_tolerance if was_aligning else 1.4
+        self.aligning = not steer_while_moving and abs(heading) >= alignment_limit
         self.settling = not steer_while_moving and not self.aligning and (
             was_aligning or self.settling)
         details = dict(heading_error=heading, target_distance=distance,
@@ -180,10 +184,14 @@ class MotionController:
             local_scan = scan_at_pose(scan, state.pose)
             direction = -1. if target.reverse else 1.
             delay = c.command_latency+max(0., now-scan.received)+c.prediction_horizon
-            lookahead = top*delay+top*top/(2*c.linear_braking)+c.target_reserve
+            # A passage already uses crawl speed and must pass the full
+            # stopping sweep. The cruise maneuvering reserve can veto that
+            # crawl even when the verified stopping path fits.
+            reserve = 0. if passage else c.target_reserve
+            lookahead = top*delay+top*top/(2*c.linear_braking)+reserve
             room = arc_obstacle_distance(
                 local_scan.points, curvature, direction, c.radius, lookahead)
-            available = max(0., room-c.target_reserve)
+            available = max(0., room-reserve)
             braking_delay = c.linear_braking*delay
             clearance_speed = math.sqrt(braking_delay**2+2*c.linear_braking*available)-braking_delay
             reasons.append((clearance_speed, 'OBSTACLE_APPROACH'))

@@ -429,6 +429,23 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertGreater(result.v, 0.)
         self.assertLessEqual(result.v, self.cfg.max_linear/3)
 
+    def test_passage_crawl_uses_verified_room_inside_cruise_reserve(self):
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        sensor = scan(self.cfg, raycast([((.24, -2.), (.24, 2.))], state.pose))
+        controller = MotionController(self.cfg)
+        result = controller.step(state, sensor, Target((.4, 0.), 'PASSAGE'), 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertFalse(result.blocked)
+        self.assertTrue(controller.safe(state, sensor, result.v, result.w, 0.)[0])
+
+    def test_passage_corrects_small_heading_error_while_moving(self):
+        state = RobotState((0., 0., 0.), .06, 0., 0., 0.)
+        target = Target((.5, .03), 'PASSAGE')
+        result = MotionController(self.cfg).step(state, scan(self.cfg), target, 0., .05)
+        self.assertGreater(result.v, state.v)
+        self.assertGreater(result.w, 0.)
+        self.assertFalse(result.blocked)
+
     def test_refined_opening_search_finds_off_grid_corridor(self):
         from py_amr_ttb.lab3.planner import Planner
         from py_amr_ttb.lab3.coverage import prepare_coverage
