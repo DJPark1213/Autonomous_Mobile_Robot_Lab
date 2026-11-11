@@ -201,9 +201,9 @@ class MotionController:
 
         # Braking at every intermediate target would turn continuous travel into
         # stop-and-go motion. Only the final goal adds a stopping-distance limit.
-        if target.mode == 'FINAL':
+        if target.mode in ('FINAL', 'APPROACH'):
             reasons.append((
-                math.sqrt(2*c.linear_braking*max(0., distance-c.goal_tolerance)),
+                math.sqrt(2*c.linear_braking*max(0., distance-target.arrival_distance(c.goal_tolerance))),
                 'ARRIVAL',
             ))
 

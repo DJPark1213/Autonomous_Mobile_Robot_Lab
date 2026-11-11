@@ -81,7 +81,9 @@ are easy to distinguish.
 
 1. Consider all 360 degrees: four front sections and four rear sections by default.
    Sample headings within each section and retain its best usable candidate.
-   No distinct passage extraction is required.
+   If a section has no usable coarse candidate, screen headings spaced at most
+   0.5 degrees apart against obstacle hits. Check the best fine heading for full
+   footprint coverage before it can become a target.
 2. A candidate must have an observed, robot-width route to its target. Unknown
    continuation is eligible for exploration, but unknown cells are never declared
    safe just because a beam is missing.
@@ -238,7 +240,11 @@ can rejoin its next saved waypoint with the normal footprint check when the extr
 shortcut margin is unavailable. Live stopping-sweep checks still apply.
 
 New waypoints must exceed target_reached by at least 0.05 m as well as satisfy
-target_min_distance. NAV_TARGET logs target changes. CSV diagnostics include
+target_min_distance. When there is no regular or backtrack route, the planner
+can select an APPROACH waypoint ahead with 0.10 m of verified usable travel.
+The short waypoint reserves 0.02 m and uses a 0.025 m arrival tolerance so the
+robot can take a small step and check the opening again. The footprint and
+stopping-sweep checks apply throughout. NAV_TARGET logs target changes. CSV diagnostics include
 heading error, target distance, and translation rejection.
 Sensor and compute waiting are distinguished from route blockage.
 

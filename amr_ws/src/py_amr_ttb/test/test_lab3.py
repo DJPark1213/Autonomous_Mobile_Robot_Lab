@@ -519,6 +519,48 @@ class MappingAndReplayTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config(goal_x=3.4, alignment_enabled=False)
 
+    def test_short_verified_approach_can_move_and_is_not_already_reached(self):
+        from py_amr_ttb.lab3.mapping import Mapper
+        from py_amr_ttb.lab3.planner import Planner
+        corners = [(-.24, -.23), (.42, -.23), (.42, .23), (-.24, .23)]
+        walls = list(zip(corners, corners[1:]+corners[:1]))
+        sensor = scan(self.cfg, raycast(walls, (0., 0., 0.)))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        mapper = Mapper(self.cfg)
+        self.assertIsNone(planner.evaluate(0., sensor, state.pose, state, mapper.grid, 0.))
+        for now in (0., .05, .10, .15, .20):
+            plan = planner.step(state, sensor, mapper, now)
+            if plan.target:
+                break
+        self.assertIsNotNone(plan.target)
+        self.assertEqual(plan.target.mode, 'APPROACH')
+        self.assertLess(math.dist(plan.target.point, (0., 0.)), self.cfg.target_reached)
+        held = planner.step(state, sensor, mapper, now+.05)
+        self.assertIs(held.target, plan.target)
+        result = MotionController(self.cfg).step_plan(state, sensor, held, now+.05, .05)
+        self.assertGreater(result.v, 0.)
+
+    def test_planner_finds_narrow_corridor_between_coarse_headings(self):
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        from py_amr_ttb.lab3.mapping import Mapper
+        from py_amr_ttb.lab3.planner import Planner
+        angle = math.radians(2.8)
+        walls = [transform_points([(-.5, y), (3., y)], (0., 0., angle))
+                 for y in (-.23, .23)]
+        sensor = process_scan(raycast(walls, (0., 0., 0.), count=1080),
+                              -math.pi, 2*math.pi/1080, .03, 6., self.cfg)
+        sensor = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        mapper = Mapper(self.cfg)
+        for heading in np.linspace(0., math.pi/4, self.cfg.heading_samples):
+            self.assertIsNone(planner.evaluate(heading, sensor, state.pose, state, mapper.grid, 0.))
+        planner.search_section = 2
+        plan = planner.step(state, sensor, mapper, 0.)
+        self.assertIsNotNone(plan.target)
+        self.assertAlmostEqual(math.atan2(plan.target.point[1], plan.target.point[0]), angle, delta=.01)
+
     def test_stalled_backtrack_is_released_despite_map_pose_change(self):
         from py_amr_ttb.lab3.mapping import Mapper
         from py_amr_ttb.lab3.planner import Planner

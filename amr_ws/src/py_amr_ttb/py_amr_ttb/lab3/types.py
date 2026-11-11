@@ -98,6 +98,9 @@ class Target:
     def key(self):
         return tuple(self.point), self.mode, self.reverse
 
+    def arrival_distance(self, default):
+        return min(default, .025) if self.mode == 'APPROACH' else default
+
 
 @dataclass
 class MotionResult:

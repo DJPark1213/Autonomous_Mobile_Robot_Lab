@@ -12,7 +12,9 @@ from dataclasses import replace
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
-from .geometry import compose, transform_points, observed_travel, scan_at_pose, circles_observed
+from .geometry import (
+    compose, transform_points, observed_travel, scan_at_pose, circles_observed, free_distances,
+)
 from .replay import speed_profile
 from .types import Target, Plan
 
@@ -66,7 +68,7 @@ class Planner:
         rear = np.linspace(math.pi/2, 3*math.pi/2, self.cfg.rear_sections+1)
         return list(zip(front[:-1], front[1:]))+list(zip(rear[:-1], rear[1:]))
 
-    def evaluate(self, heading, scan, pose, state, grid, now):
+    def evaluate(self, heading, scan, pose, state, grid, now, *, approach=False):
         """A direction toward the goal is useless if the robot cannot
         fit along it or it repeats a recent failed attempt.
 
@@ -76,14 +78,20 @@ class Planner:
         choices; it is not a probability.
         """
         c = self.cfg
-        room = observed_travel(scan, heading, c.radius, c.scoring_horizon,
-                               step=max(.05, c.grid_resolution))
-        travel = min(c.target_distance, room-c.target_reserve)
-        minimum_travel = max(c.target_min_distance, c.target_reached+.05)
+        if approach:
+            room = observed_travel(scan, heading, c.radius, .25, step=.025)
+            reserve, minimum_travel = .02, .08
+        else:
+            room = observed_travel(scan, heading, c.radius, c.scoring_horizon,
+                                   step=max(.05, c.grid_resolution))
+            reserve = c.target_reserve
+            minimum_travel = max(c.target_min_distance, c.target_reached+.05)
+        travel = min(c.target_distance, room-reserve)
         self.diagnostics['headings_checked'] = self.diagnostics.get('headings_checked', 0) + 1
         self.diagnostics['max_observed_travel'] = max(
             self.diagnostics.get('max_observed_travel', 0.), float(room))
-        self.diagnostics['required_travel'] = minimum_travel + c.target_reserve
+        requirement = 'approach_required_travel' if approach else 'required_travel'
+        self.diagnostics[requirement] = minimum_travel+reserve
         if travel < minimum_travel:
             self.diagnostics['short_headings'] = self.diagnostics.get('short_headings', 0) + 1
             return None
@@ -101,7 +109,8 @@ class Planner:
                  -c.weight_heading*abs(normalize_angle(heading))/math.pi
                  -c.weight_rotation*abs(desired_w-state.w)/(2*c.max_angular)
                  -c.weight_history*self.memory.penalty(pose[:2], pose[2]+heading, now))
-        return Target(tuple(point), score=float(score)), room, heading
+        mode = 'APPROACH' if approach else 'FIRST_RUN'
+        return Target(tuple(point), mode, score=float(score)), room, heading
 
     def replay_target(self, pose, scan, grid):
         """A distant saved waypoint can tempt the robot to cut across a
@@ -169,7 +178,7 @@ class Planner:
         # Otherwise the planner could send the robot straight back into the same pocket.
         near = (
             self.target is None
-            or math.dist(pose[:2], self.target.point) < c.target_reached
+            or math.dist(pose[:2], self.target.point) < self.target.arrival_distance(c.target_reached)
         )
         elapsed = 0. if self.feedback_at is None else max(0., now-self.feedback_at)
         self.feedback_at = now
@@ -257,7 +266,7 @@ class Planner:
         # Arrival, blockage or stalled progress allows an earlier decision.
         near = (
             self.target is None
-            or math.dist(pose[:2], self.target.point) < c.target_reached
+            or math.dist(pose[:2], self.target.point) < self.target.arrival_distance(c.target_reached)
         )
         if not near and not stalled:
             return Plan(
@@ -282,6 +291,7 @@ class Planner:
             math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2]
         )
         options = []
+        required_travel = max(c.target_min_distance, c.target_reached+.05)+c.target_reserve
         sections = self.sections()
         start_section = self.search_section
         search_started = time.perf_counter()
@@ -302,6 +312,18 @@ class Planner:
                 for h in headings
             ]
             candidates = [candidate for candidate in candidates if candidate is not None]
+            if not candidates:
+                # Screen intermediate bearings against hits first. Only the
+                # best one needs a full observed-footprint evaluation.
+                fine_count = math.ceil((upper-lower)/math.radians(.5))+1
+                fine_headings = np.linspace(lower, upper, fine_count)
+                room = free_distances(local_scan.points, fine_headings, c.radius, c.scoring_horizon)
+                best_index = int(np.argmax(room))
+                if room[best_index] >= required_travel:
+                    candidate = self.evaluate(normalize_angle(fine_headings[best_index]),
+                                              local_scan, pose, state, grid, now)
+                    if candidate is not None:
+                        candidates.append(candidate)
             if candidates:
                 best = max(candidates, key=lambda item: item[0].score)
 
@@ -343,6 +365,23 @@ class Planner:
                                     first_step_distance=probe_distance,
                                     clear_first_steps=int(np.count_nonzero(clear_steps)))
             previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], grid)
+            if previous is None and not self.recovery_stalled and not sustained_block:
+                approaches = []
+                headings = np.unique(np.append(np.linspace(-math.pi/4, math.pi/4, 5),
+                                               np.clip(goal_heading, -math.pi/4, math.pi/4)))
+                for heading in headings:
+                    candidate = self.evaluate(heading, local_scan, pose, state, grid, now, approach=True)
+                    if candidate is None:
+                        continue
+                    target, _, _ = candidate
+                    direction = pose[2]+heading
+                    if not (grid.closed_ahead(pose[:2], direction)
+                            or grid.closed_ahead(target.point, direction)):
+                        approaches.append(target)
+                if approaches:
+                    self.commit(max(approaches, key=lambda target: target.score), state, pose, now)
+                    return Plan(self.target, mapper.transform, now, grid.revision,
+                                diagnostics=dict(self.diagnostics))
             angle = (
                 normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])
                 if previous else 0.
