@@ -234,6 +234,18 @@ class StateAndMotionTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_changing_waypoints_does_not_renew_turn_allowance(self):
+        controller = MotionController(self.cfg)
+        for tick in range(70):
+            yaw = (tick*.1+math.pi) % (2*math.pi)-math.pi
+            now = tick*.05
+            state = RobotState((0., 0., yaw), 0., .5, now, now)
+            target = Target((math.cos(yaw+1.5), math.sin(yaw+1.5)))
+            result = controller.step(state, scan(self.cfg, pose=state.pose, stamp=now),
+                                     target, now, .05)
+        self.assertEqual(result.reason, 'TURN_WITHOUT_PROGRESS')
+        self.assertEqual((result.v, result.w), (0., 0.))
+
     def test_rotation_brakes_before_translation(self):
         controller = MotionController(self.cfg)
         target = Target((2., 0.))

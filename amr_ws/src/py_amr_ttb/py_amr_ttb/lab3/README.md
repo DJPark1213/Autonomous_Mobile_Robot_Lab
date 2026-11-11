@@ -90,20 +90,14 @@ are easy to distinguish.
 3. Reward goal progress, observed travel, and clearance. Penalize heading change,
    change from measured angular velocity, and previously failed directions.
    A long path can win before its cap becomes visible.
-4. An observed wall-to-wall gate and a bounded free-space search can establish a
-   capped pocket. Encountering unknown cells or reaching the search budget means
-   **unresolved**, not closed. This is a conservative local test, not a complete
-   maze topology proof.
-5. Hold the map-frame target through alignment and travel. Reconsider on arrival,
-   sustained blockage, a verified capped route, or a stall. The controller checks
-   every command against current sensing.
-6. A stall, return to a recent location, or a confirmed cap triggers recovery.
-   Backtracking stays committed until near its return point or blocked. Failed
-   directions are penalized both at the failed position and the return point.
-   Reversing is limited to this recovery behavior and uses the rear scan too.
-7. New obstacles cause braking and a new decision. There is no fixed waiting
-   delay before using another clear direction. If no usable route exists, stop
-   and keep observing; the overall runtime limit prevents an endless run.
+4. Hold the odometry waypoint through alignment and travel. Reconsider on arrival,
+   sustained blockage, or a stall. The controller checks every command against
+   current sensing.
+5. Remember failed directions and use recent odometry waypoints to backtrack
+   when the current scan supports the return path. Reversing is limited to this
+   recovery behavior and uses the rear scan too.
+6. If no usable route exists, stop and keep observing. The overall runtime
+   limit bounds the run.
 
 ## Build and run on the ROS machine
 
@@ -131,10 +125,12 @@ ros2 launch py_amr_ttb lab3_replay.launch.py robot_namespace:=/TTB10
 ```
 
 Both launches accept `run_file:=/absolute/path/course.npz`. The default is
-`~/amr_lab3_runs/course.npz`. Replay requires a completed run, compatible map
-geometry/footprint/goal, and a convincing initial LiDAR alignment. The default
-start search is +/-0.30 m and +/-0.10 rad. An ambiguous start remains stopped
-with `ALIGNMENT_REQUIRED`; reposition the robot into recognizable geometry.
+`~/amr_lab3_runs/course.npz`. Go-to-goal chooses and holds odometry waypoints using current LiDAR clearance.
+It records the driven route and remembers failed directions for recovery.
+For replay of a new recording, start from the same position and heading in the
+same odometry coordinates. Replay checks each shortcut against current LiDAR.
+Older map-based recordings still use initial LiDAR alignment and can report
+`ALIGNMENT_REQUIRED` if the starting pose is ambiguous.
 Replay saves its result as `course.replay.npz`. Incomplete learning runs save to
 `course.incomplete.npz`. A completed learning run is saved at `course.npz`.
 
@@ -230,6 +226,9 @@ speed falls below angular_settle_speed (0.15 rad/s). Normal tracking can steer
 continuously. If the initial translation fails, the controller checks one slower
 candidate. When both fail, it reports TRANSLATION_COVERAGE or TRANSLATION_OBSTACLE
 and checks the predicted stop. The next cycle can drive when fresh coverage supports it.
+TURN_WITHOUT_PROGRESS requests zero after one revolution of accumulated turning
+without 0.05 m of displacement in odometry. Waypoint changes do not renew the
+allowance. Moving the base by that distance or resetting the run clears the stop.
 
 The planner accumulates blocked samples for the attempted waypoint across brief
 interruptions. It tracks progress in odometry and scales the required displacement
@@ -242,7 +241,7 @@ shortcut margin is unavailable. Live stopping-sweep checks still apply.
 New waypoints must exceed target_reached by at least 0.05 m as well as satisfy
 target_min_distance. When there is no regular or backtrack route, the planner
 can select an APPROACH waypoint ahead with 0.10 m of verified usable travel.
-The short waypoint reserves 0.02 m and uses a 0.025 m arrival tolerance so the
+The approach looks up to 0.35 m ahead, reserves 0.02 m, and uses a 0.025 m arrival tolerance so the
 robot can take a small step and check the opening again. The footprint and
 stopping-sweep checks apply throughout. NAV_TARGET logs target changes. CSV diagnostics include
 heading error, target distance, and translation rejection.

@@ -90,6 +90,9 @@ class MotionController:
         self.cfg = config
         self.aligning = False
         self.settling = False
+        self.turn_anchor = None
+        self.previous_yaw = None
+        self.turn_without_progress = 0.
 
     def safe(self, state, scan, v, w, now, diagnostics=None):
         """Obstacles can lie between predicted positions or along the
@@ -170,6 +173,21 @@ class MotionController:
 
         if target.mode == 'DONE':
             return MotionResult(reason='DONE')
+        # Waypoint changes must not renew the turn allowance. Measure motion
+        # in odometry so map corrections cannot count as translation.
+        position = state.pose[:2]
+        yaw = state.pose[2]
+        if self.turn_anchor is None or math.dist(position, self.turn_anchor) >= .05:
+            self.turn_anchor = tuple(position)
+            self.turn_without_progress = 0.
+        else:
+            self.turn_without_progress += abs(normalize_angle(yaw-self.previous_yaw))
+        self.previous_yaw = yaw
+        if self.turn_without_progress >= 2*math.pi:
+            return MotionResult(reason='TURN_WITHOUT_PROGRESS', diagnostics={
+                'turned_radians': self.turn_without_progress,
+                'displacement': math.dist(position, self.turn_anchor),
+            })
         # 2. Steering needs the target's distance and angle relative to the robot now.
         local = inverse_points([target.point], state.pose)[0]
         distance = float(np.linalg.norm(local))

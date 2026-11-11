@@ -79,7 +79,7 @@ class Planner:
         """
         c = self.cfg
         if approach:
-            room = observed_travel(scan, heading, c.radius, .25, step=.025)
+            room = observed_travel(scan, heading, c.radius, .35, step=.025)
             reserve, minimum_travel = .02, .08
         else:
             room = observed_travel(scan, heading, c.radius, c.scoring_horizon,
@@ -112,6 +112,12 @@ class Planner:
         mode = 'APPROACH' if approach else 'FIRST_RUN'
         return Target(tuple(point), mode, score=float(score)), room, heading
 
+    def observed_segment(self, pose, scan, point):
+        dx, dy = point[0]-pose[0], point[1]-pose[1]
+        distance = math.hypot(dx, dy)
+        heading = math.atan2(dy, dx)-pose[2]
+        return observed_travel(scan, heading, self.cfg.radius, distance+.051) >= distance
+
     def replay_target(self, pose, scan, grid):
         """A distant saved waypoint can tempt the robot to cut across a
         wall or an unseen corner.
@@ -128,14 +134,16 @@ class Planner:
         for i in range(self.route_index, len(self.route)):
             if math.dist(pose[:2], self.route[i]) > self.cfg.target_distance and selected is not None:
                 break
-            if grid.segment_clear(pose[:2], self.route[i], margin=self.cfg.route_margin):
-                selected = i
+            if grid is None:
+                clear = self.observed_segment(pose, scan, self.route[i])
             else:
+                clear = grid.segment_clear(pose[:2], self.route[i], margin=self.cfg.route_margin)
+            if not clear:
                 break
+            selected = i
         if selected is None:
-            # Rejoin the saved route using the normal footprint when the
-            # extra shortcut margin is unavailable at the current pose.
-            if not grid.segment_clear(pose[:2], self.route[self.route_index]):
+            # Legacy replay can rejoin using the normal footprint.
+            if grid is None or not grid.segment_clear(pose[:2], self.route[self.route_index]):
                 return None
             selected = self.route_index
         self.route_index = max(self.route_index, selected)
@@ -153,12 +161,20 @@ class Planner:
         map transform; motion control checks velocity commands separately.
         """
         # 1. Targets use map coordinates; direction checks use the robot's frame now.
-        c, grid = self.cfg, mapper.grid
-        pose = compose(mapper.transform, state.pose)
+        c = self.cfg
+        grid = mapper.grid if mapper is not None else None
+        transform = mapper.transform if mapper is not None else (0., 0., 0.)
+        revision = grid.revision if grid is not None else 0
+        pose = compose(transform, state.pose)
         scan = replace(scan, coverage_time=now, coverage_timeout=c.sensor_timeout,
                        history=tuple(previous for previous in scan.history
                        if 0 <= now-previous.received <= c.sensor_timeout))
         local_scan = scan_at_pose(scan, state.pose)
+        def segment_clear(start, point):
+            if grid is not None:
+                return grid.segment_clear(start, point)
+            return self.observed_segment(pose, local_scan, point)
+
         self.memory.record(pose, now)
         if self.started is None:
             self.started = self.progress_at = now
@@ -169,10 +185,10 @@ class Planner:
         if self.memory.complete or distance <= c.goal_tolerance:
             self.memory.complete = True
             self.target = Target((c.goal_x, c.goal_y), 'DONE')
-            return Plan(self.target, mapper.transform, now, grid.revision, 'DONE')
+            return Plan(self.target, transform, now, revision, 'DONE')
 
         if now-self.started > c.max_runtime:
-            return Plan(None, mapper.transform, now, grid.revision, 'TIME_LIMIT')
+            return Plan(None, transform, now, revision, 'TIME_LIMIT')
 
         # 3. Complete an unblocked retreat before choosing another exploration target.
         # Otherwise the planner could send the robot straight back into the same pocket.
@@ -201,7 +217,7 @@ class Planner:
         failed_backtrack = (self.target is not None and self.target.mode == 'BACKTRACK' and not near
                             and (sustained_block or no_progress))
         if self.target and self.target.mode == 'BACKTRACK' and not near and not failed_backtrack:
-            return Plan(self.target, mapper.transform, now, grid.revision)
+            return Plan(self.target, transform, now, revision)
 
         # 4. If the goal is nearby and its whole approach is observed, aim there directly.
         if distance <= c.target_distance and not sustained_block and not no_progress:
@@ -210,12 +226,12 @@ class Planner:
             )
             if observed_travel(local_scan, goal_heading, c.radius, distance+.15) >= distance:
                 self.commit(Target((c.goal_x, c.goal_y), 'FINAL'), state, pose, now)
-                return Plan(self.target, mapper.transform, now, grid.revision)
+                return Plan(self.target, transform, now, revision)
 
         # Keep a selected waypoint through alignment and transient feedback.
         # Motion still validates every command against current sensor coverage.
         if self.target is not None and not near and committed and not sustained_block:
-            return Plan(self.target, mapper.transform, now, grid.revision,
+            return Plan(self.target, transform, now, revision,
                         diagnostics=dict(self.diagnostics, holding_for='TARGET_COMMITMENT',
                                          commitment_remaining=self.target_committed_until-now))
 
@@ -232,7 +248,7 @@ class Planner:
         goal_angle = math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])
         active_heading = goal_angle if near else math.atan2(
             self.target.point[1]-pose[1], self.target.point[0]-pose[0])
-        capped = grid.closed_ahead(pose[:2], active_heading)
+        capped = grid is not None and grid.closed_ahead(pose[:2], active_heading)
         stalled = no_progress or sustained_block or (near and revisited) or capped
         if motion_reason in ('WAITING_FOR_FRESH_PLAN', 'WAITING_FOR_SENSORS',
                              'CONTROL_DEADLINE', 'COMMAND_EXPIRED', 'SEARCHING_ROUTE'):
@@ -248,7 +264,7 @@ class Planner:
             if failed_backtrack:
                 self.target = None
                 self.recovery_stalled = True
-            previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], grid)
+            previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
 
             if previous is not None:
                 angle = normalize_angle(
@@ -260,7 +276,7 @@ class Planner:
                 # Discourage choosing the same goalward direction upon returning there.
                 self.memory.fail(previous, goal_angle, now)
                 self.recent.clear()
-                return Plan(self.target, mapper.transform, now, grid.revision)
+                return Plan(self.target, transform, now, revision)
 
         # 7. Keep a useful target between decision times to avoid constant steering changes.
         # Arrival, blockage or stalled progress allows an earlier decision.
@@ -270,7 +286,7 @@ class Planner:
         )
         if not near and not stalled:
             return Plan(
-                self.target, mapper.transform, now, grid.revision,
+                self.target, transform, now, revision,
                 diagnostics=self.diagnostics,
             )
 
@@ -282,7 +298,7 @@ class Planner:
             if target is not None:
                 self.commit(target, state, pose, now)
                 return Plan(
-                    target, mapper.transform, now, grid.revision,
+                    target, transform, now, revision,
                     diagnostics=self.diagnostics,
                 )
 
@@ -330,7 +346,7 @@ class Planner:
                 # Nearby room can still lead into a mapped dead end. Keep this
                 # section's winner only if the pocket test does not establish a cap.
                 direction = pose[2]+best[2]
-                if not (grid.closed_ahead(pose[:2], direction)
+                if grid is None or not (grid.closed_ahead(pose[:2], direction)
                         or grid.closed_ahead(best[0].point, direction)):
                     options.append(best)
                 else:
@@ -343,7 +359,7 @@ class Planner:
         self.diagnostics['sections_searched'] = searched
         self.empty_search_sections = self.empty_search_sections+searched if not options else 0
         if not options and self.empty_search_sections < len(sections):
-            return Plan(None, mapper.transform, now, grid.revision, 'SEARCHING_ROUTE',
+            return Plan(None, transform, now, revision, 'SEARCHING_ROUTE',
                         diagnostics=dict(self.diagnostics))
         if not options:
             self.empty_search_sections = 0
@@ -364,7 +380,7 @@ class Planner:
                                     first_step=step_details,
                                     first_step_distance=probe_distance,
                                     clear_first_steps=int(np.count_nonzero(clear_steps)))
-            previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], grid)
+            previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
             if previous is None and not self.recovery_stalled and not sustained_block:
                 approaches = []
                 headings = np.unique(np.append(np.linspace(-math.pi/4, math.pi/4, 5),
@@ -375,12 +391,12 @@ class Planner:
                         continue
                     target, _, _ = candidate
                     direction = pose[2]+heading
-                    if not (grid.closed_ahead(pose[:2], direction)
+                    if grid is None or not (grid.closed_ahead(pose[:2], direction)
                             or grid.closed_ahead(target.point, direction)):
                         approaches.append(target)
                 if approaches:
                     self.commit(max(approaches, key=lambda target: target.score), state, pose, now)
-                    return Plan(self.target, mapper.transform, now, grid.revision,
+                    return Plan(self.target, transform, now, revision,
                                 diagnostics=dict(self.diagnostics))
             angle = (
                 normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])
@@ -392,7 +408,7 @@ class Planner:
             )
             self.commit(target, state, pose, now)
             status = 'RECOVERY_STALLED' if self.recovery_stalled else 'NO_LOCAL_ROUTE'
-            return Plan(self.target, mapper.transform, now, grid.revision, status,
+            return Plan(self.target, transform, now, revision, status,
                         diagnostics=dict(self.diagnostics))
 
         # Select the entire winning candidate, so its score, room and heading stay paired.
@@ -415,6 +431,6 @@ class Planner:
             candidate_count=len(options), score=best.score, available_travel=room,
         )
         return Plan(
-            best, mapper.transform, now, grid.revision,
+            best, transform, now, revision,
             diagnostics=self.diagnostics,
         )

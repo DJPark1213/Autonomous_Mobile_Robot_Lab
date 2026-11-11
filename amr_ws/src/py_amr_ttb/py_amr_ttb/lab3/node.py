@@ -285,7 +285,8 @@ class Lab3Node(Node):
             self.get_logger().info(result.reason)
             self.last_reason = result.reason
         failure_details = {}
-        if result.reason in ('NO_LOCAL_ROUTE', 'RECOVERY_STALLED', 'EMERGENCY_STOP', 'BRAKE_PATH_BLOCKED',
+        if result.reason in ('NO_LOCAL_ROUTE', 'RECOVERY_STALLED', 'TURN_WITHOUT_PROGRESS',
+                             'EMERGENCY_STOP', 'BRAKE_PATH_BLOCKED',
                              'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN',
                              'CONTROL_DEADLINE', 'COMMAND_EXPIRED', 'SEARCHING_ROUTE', 'BRAKE_ROTATION',
                              'TRANSLATION_COVERAGE', 'TRANSLATION_OBSTACLE',

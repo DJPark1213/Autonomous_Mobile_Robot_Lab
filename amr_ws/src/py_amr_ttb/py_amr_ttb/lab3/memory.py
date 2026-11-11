@@ -23,7 +23,8 @@ class RunMemory:
     record of the completed run.
 
     Route rows are [x, y, yaw, time]; attempt rows are [x, y, heading, count, time].
-    Coordinates use the map frame and live timestamps use monotonic time.
+    Coordinates use odometry for route-only runs and the map frame for legacy replay.
+    Live timestamps use monotonic time.
     """
 
     def __init__(self, config):
@@ -72,7 +73,7 @@ class RunMemory:
             result += space*angle*count*age
         return min(3., result)
 
-    def return_target(self, position, grid):
+    def return_target(self, position, segment_clear):
         """A previously visited position may offer a way out, but going
         directly toward it could cut through a wall.
 
@@ -82,7 +83,7 @@ class RunMemory:
         candidates = []
         for point in reversed(self.route[:-1]):
             distance = math.dist(position, point[:2])
-            if .2 <= distance <= self.cfg.backtrack_distance and grid.segment_clear(position, point[:2]):
+            if .2 <= distance <= self.cfg.backtrack_distance and segment_clear(position, point[:2]):
                 candidates.append((distance, tuple(point[:2])))
             if len(candidates) >= 20:
                 break
@@ -99,12 +100,14 @@ class RunMemory:
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         metadata = dict(version=1, config=asdict(self.cfg), complete=self.complete,
-                        transform=list(transform), revision=grid.revision)
+                        transform=list(transform), revision=grid.revision if grid is not None else 0,
+                        route_only=grid is None)
         descriptor, temporary = tempfile.mkstemp(prefix=path.name+'.', dir=path.parent)
         try:
             with os.fdopen(descriptor, 'wb') as stream:
-                np.savez_compressed(stream, metadata=json.dumps(metadata), evidence=grid.evidence,
-                                    observed=grid.observed, last_seen=grid.last_seen,
+                layers = {} if grid is None else dict(
+                    evidence=grid.evidence, observed=grid.observed, last_seen=grid.last_seen)
+                np.savez_compressed(stream, metadata=json.dumps(metadata), **layers,
                                     route=np.asarray(self.route, dtype=float).reshape(-1, 4),
                                     attempts=np.asarray(self.attempts, dtype=float).reshape(-1, 5))
                 stream.flush()
@@ -128,12 +131,16 @@ class RunMemory:
             if metadata['version'] != 1:
                 raise ValueError('Unsupported saved-run format')
             saved = metadata['config']
-            for key in ('grid_resolution', 'grid_width', 'grid_height', 'grid_origin_x',
-                        'grid_origin_y', 'robot_radius', 'safety_margin', 'goal_x', 'goal_y'):
+            keys = ('robot_radius', 'safety_margin', 'goal_x', 'goal_y')
+            if not metadata.get('route_only'):
+                keys += ('grid_resolution', 'grid_width', 'grid_height',
+                         'grid_origin_x', 'grid_origin_y')
+            for key in keys:
                 if saved[key] != getattr(config, key):
                     raise ValueError(f'Saved run has different {key}')
-            grid, memory = OccupancyMap(config), cls(config)
-            for name in ('evidence', 'observed', 'last_seen'):
+            grid = None if metadata.get('route_only') else OccupancyMap(config)
+            memory = cls(config)
+            for name in (() if grid is None else ('evidence', 'observed', 'last_seen')):
                 array = data[name]
                 if array.shape != grid.evidence.shape or not np.isfinite(array).all():
                     raise ValueError('Invalid saved map')
@@ -148,5 +155,6 @@ class RunMemory:
             for attempt in memory.attempts:
                 attempt[4] = -config.history_decay
             memory.complete = bool(metadata['complete'])
-            grid.revision = int(metadata['revision'])
+            if grid is not None:
+                grid.revision = int(metadata['revision'])
             return memory, grid

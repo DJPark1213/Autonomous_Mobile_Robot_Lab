@@ -88,8 +88,8 @@ class NavigationEngine:
         """
         self.cfg = config
         self.memory = RunMemory(config)
-        self.mapper = Mapper(config)
-        self.aligned = config.run_mode == 'learn'
+        self.mapper = None
+        self.aligned = True
         self.saved = False
         self.last_map = float('-inf')
         route = None
@@ -97,8 +97,12 @@ class NavigationEngine:
             saved, grid = RunMemory.load(config.run_file, config)
             if not saved.complete or len(saved.route) < 2:
                 raise ValueError('Replay requires a completed first run')
-            route = optimize_route(saved.route, grid, config)
-            self.mapper = Mapper(config, grid)
+            if grid is None:
+                route = [row[:2] for row in saved.route]
+            else:
+                route = optimize_route(saved.route, grid, config)
+                self.mapper = Mapper(config, grid)
+                self.aligned = False
         self.planner = Planner(config, self.memory, route)
 
     def step(self, work):
@@ -118,14 +122,16 @@ class NavigationEngine:
             self.mapper.transform = compose(pose, between(work.scan.pose, (0., 0., 0.)))
             self.mapper.estimator.initialize(work.scan.pose, pose)
             self.aligned = True
-        if work.now-self.last_map >= self.cfg.map_period-1e-9:
+        if self.mapper is not None and work.now-self.last_map >= self.cfg.map_period-1e-9:
             self.mapper.update(work.scan, work.state.covariance)
             self.last_map = work.now
         plan = self.planner.step(work.state, work.scan, self.mapper, work.now, work.blocked,
                                  work.motion_reason, work.feedback_target)
-        plan.diagnostics = dict(plan.diagnostics, worker_seconds=time.perf_counter()-started,
-                                alignment=self.mapper.alignment,
-                                pose_variance=self.mapper.estimator.covariance.diagonal().tolist())
+        plan.diagnostics = dict(plan.diagnostics, worker_seconds=time.perf_counter()-started)
+        if self.mapper is not None:
+            plan.diagnostics.update(
+                alignment=self.mapper.alignment,
+                pose_variance=self.mapper.estimator.covariance.diagonal().tolist())
         if plan.status in ('DONE', 'TIME_LIMIT') and not self.saved:
             self.save()
             self.saved = True
@@ -142,7 +148,10 @@ class NavigationEngine:
             destination = destination.with_name(destination.stem+'.replay.npz')
         elif not self.memory.complete:
             destination = destination.with_name(destination.stem+'.incomplete.npz')
-        self.memory.save(destination, self.mapper.grid, self.mapper.transform)
+        if self.mapper is None:
+            self.memory.save(destination, None)
+        else:
+            self.memory.save(destination, self.mapper.grid, self.mapper.transform)
 
 
 def worker_main(config, incoming, outgoing, stopping, save_requested):
