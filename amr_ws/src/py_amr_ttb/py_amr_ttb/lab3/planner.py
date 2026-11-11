@@ -15,6 +15,7 @@ from py_amr_ttb.odom_utils import normalize_angle
 from .geometry import (
     compose, transform_points, observed_travel, scan_at_pose, circles_observed, free_distances,
 )
+from .motion import MotionController
 from .replay import speed_profile
 from .types import Target, Plan
 
@@ -156,6 +157,23 @@ class Planner:
         self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
+    def forward_correction(self, state, scan, local_scan, pose, now):
+        """Try the smallest forward heading change with room to steer and stop."""
+        c = self.cfg
+        controller = MotionController(c)
+        for degrees in (0, 5, -5, 10, -10, 15, -15):
+            heading = math.radians(degrees)
+            room = observed_travel(local_scan, heading, c.radius, .40, step=.025)
+            if room < .25:
+                continue
+            turn = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
+            if not controller.safe(state, scan, 0., turn, now)[0]:
+                continue
+            travel = min(.35, room)
+            local = (travel*math.cos(heading), travel*math.sin(heading))
+            return Target(tuple(transform_points([local], pose)[0]), 'FORWARD_CORRECTION')
+        return None
+
     def follow_wall(self, scan, pose):
         """Select a forward segment alongside the nearest hit on the chosen side."""
         c = self.cfg
@@ -245,9 +263,27 @@ class Planner:
         if self.target and self.target.mode == 'BACKTRACK' and not near and not failed_backtrack:
             return Plan(self.target, transform, now, revision)
 
-        if grid is None and (self.wall_side or sustained_block or no_progress):
+        if grid is None and self.route is None and self.wall_start is None and self.target:
+            correcting = self.target.mode == 'FORWARD_CORRECTION'
+            if correcting and not near and not sustained_block and not no_progress:
+                return Plan(self.target, transform, now, revision)
+            if not correcting and not near:
+                dx, dy = self.target.point[0]-pose[0], self.target.point[1]-pose[1]
+                heading = normalize_angle(math.atan2(dy, dx)-pose[2])
+                threatened = (abs(heading) <= math.radians(15)
+                              and observed_travel(local_scan, heading, c.radius, .30) < .20)
+                if threatened or sustained_block or no_progress:
+                    correction = self.forward_correction(state, scan, local_scan, pose, now)
+                    if correction is not None:
+                        self.commit(correction, state, pose, now)
+                        return Plan(correction, transform, now, revision,
+                                    diagnostics={'recovery': 'FORWARD_CORRECTION'})
+
+        if grid is None and (self.wall_start is not None or sustained_block or no_progress):
+            if self.wall_start is None:
+                self.wall_start = pose[:2]
             goal = (c.goal_x, c.goal_y)
-            goal_clear = (self.wall_side and math.dist(pose[:2], self.wall_start) >= .25
+            goal_clear = ((not self.wall_side or math.dist(pose[:2], self.wall_start) >= .25)
                           and self.observed_segment(pose, local_scan, goal))
             if goal_clear and self.wall_clear_scan is None:
                 self.wall_clear_scan = scan.received
@@ -255,9 +291,11 @@ class Planner:
                 self.wall_clear_scan = None
             if goal_clear and scan.received > self.wall_clear_scan:
                 self.wall_side = 0
+                self.wall_start = None
                 self.wall_clear_scan = None
                 self.commit(None, state, pose, now)
                 sustained_block = no_progress = False
+                near = True
             else:
                 if (self.target is not None and self.target.mode == 'FOLLOW_WALL'
                         and not near and not sustained_block and not no_progress):
@@ -266,7 +304,6 @@ class Planner:
                     target = self.follow_wall(local_scan, pose)
                 if target is not None and not self.wall_side:
                     self.wall_side = target.wall_side
-                    self.wall_start = pose[:2]
                 self.commit(target, state, pose, now)
                 return Plan(target, transform, now, revision,
                             'RUNNING' if target else 'WALL_FOLLOW_BLOCKED',
@@ -277,7 +314,8 @@ class Planner:
             goal_heading = normalize_angle(
                 math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2]
             )
-            if observed_travel(local_scan, goal_heading, c.radius, distance+.15) >= distance:
+            if ((grid is not None or self.route is not None or abs(goal_heading) <= math.pi/2)
+                    and observed_travel(local_scan, goal_heading, c.radius, distance+.15) >= distance):
                 self.commit(Target((c.goal_x, c.goal_y), 'FINAL'), state, pose, now)
                 return Plan(self.target, transform, now, revision)
 
@@ -362,6 +400,8 @@ class Planner:
         options = []
         required_travel = max(c.target_min_distance, c.target_reached+.05)+c.target_reserve
         sections = self.sections()
+        if grid is None and self.route is None:
+            sections = sections[:c.front_sections]
         start_section = self.search_section
         search_started = time.perf_counter()
         searched = 0

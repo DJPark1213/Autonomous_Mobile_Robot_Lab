@@ -99,6 +99,8 @@ class Target:
         return tuple(self.point), self.mode, self.reverse
 
     def arrival_distance(self, default):
+        if self.mode == 'FORWARD_CORRECTION':
+            return min(default, .05)
         return min(default, .025) if self.mode == 'APPROACH' else default
 
 
