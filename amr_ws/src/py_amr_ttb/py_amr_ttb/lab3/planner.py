@@ -40,6 +40,8 @@ class Planner:
         self.alignment_started = None
         self.search_section = 0
         self.empty_search_sections = 0
+        self.target_committed_until = -math.inf
+        self.blocked_since = None
 
     def sections(self):
         """An escape from a blocked forward path may lie beside or
@@ -65,11 +67,12 @@ class Planner:
         room = observed_travel(scan, heading, c.radius, c.scoring_horizon,
                                step=max(.05, c.grid_resolution))
         travel = min(c.target_distance, room-c.target_reserve)
+        minimum_travel = max(c.target_min_distance, c.target_reached+.05)
         self.diagnostics['headings_checked'] = self.diagnostics.get('headings_checked', 0) + 1
         self.diagnostics['max_observed_travel'] = max(
             self.diagnostics.get('max_observed_travel', 0.), float(room))
-        self.diagnostics['required_travel'] = c.target_min_distance + c.target_reserve
-        if travel < c.target_min_distance:
+        self.diagnostics['required_travel'] = minimum_travel + c.target_reserve
+        if travel < minimum_travel:
             self.diagnostics['short_headings'] = self.diagnostics.get('short_headings', 0) + 1
             return None
         goal = (c.goal_x, c.goal_y)
@@ -168,6 +171,21 @@ class Planner:
             if observed_travel(local_scan, goal_heading, c.radius, distance+.15) >= distance:
                 self.target = Target((c.goal_x, c.goal_y), 'FINAL')
                 return Plan(self.target, mapper.transform, now, grid.revision)
+
+        # Keep a selected waypoint through alignment and transient feedback.
+        # Motion still validates every command against current sensor coverage.
+        if blocked:
+            if self.blocked_since is None:
+                self.blocked_since = now
+        else:
+            self.blocked_since = None
+        sustained_block = (self.blocked_since is not None and
+                           now-self.blocked_since >= max(.5, 2*c.map_period))
+        if self.target is not None and not near and now < self.target_committed_until and not sustained_block:
+            self.progress_at = now
+            return Plan(self.target, mapper.transform, now, grid.revision,
+                        diagnostics=dict(self.diagnostics, holding_for='TARGET_COMMITMENT',
+                                         commitment_remaining=self.target_committed_until-now))
 
         # 5. Recognize getting stuck: little movement, a loop, or an observed dead end.
         # Progress means displacement from an anchor, not necessarily toward the goal.
@@ -355,6 +373,10 @@ class Planner:
         # The plan carries this target's map transform so later corrections cannot
         # make control interpret it using a different coordinate relationship.
         self.target = best
+        turn_time = abs(heading)/max(.1, c.max_angular/2)
+        self.target_committed_until = now+max(c.stall_timeout, turn_time+1.)
+        self.blocked_since = None
+        self.progress_at = now
         self.diagnostics.update(
             candidate_count=len(options), score=best.score, available_travel=room,
         )

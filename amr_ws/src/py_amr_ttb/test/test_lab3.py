@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -45,6 +46,21 @@ class GeometryTests(unittest.TestCase):
         result = MotionController(self.cfg).step_plan(
             state, scan(self.cfg, stamp=3.), plan, 3., .05)
         self.assertEqual(result.reason, 'WAITING_FOR_FRESH_PLAN')
+
+    def test_target_commitment_survives_transient_stops(self):
+        from py_amr_ttb.lab3.mapping import Mapper
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        target = Target((0., 1.))
+        planner.target = target
+        planner.target_committed_until = 5.
+        mapper = Mapper(self.cfg)
+        for now, reason, blocked in ((0., 'ALIGN', False), (.2, 'EMERGENCY_STOP', True),
+                                     (.4, 'WAITING_FOR_FRESH_PLAN', False), (.6, 'ALIGN', False)):
+            state = RobotState((0., 0., 0.), 0., 0., now, now)
+            result = planner.step(state, scan(self.cfg, stamp=now), mapper, now, blocked, reason)
+            self.assertIs(result.target, target)
+            self.assertEqual(result.diagnostics['holding_for'], 'TARGET_COMMITMENT')
 
     def test_alignment_holds_target_past_positional_stall_timeout(self):
         from py_amr_ttb.lab3.mapping import Mapper
@@ -231,6 +247,59 @@ class GeometryTests(unittest.TestCase):
 class StateAndMotionTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
+
+    def test_obstacle_rejection_does_not_start_observation_turn(self):
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        sensor = scan(self.cfg, raycast([((.225, -2.), (.225, 2.))], state.pose))
+        result = MotionController(self.cfg).step(state, sensor, Target((2., 0.)), 0., .05)
+        self.assertEqual(result.reason, 'TRANSLATION_OBSTACLE')
+        self.assertEqual((result.v, result.w), (0., 0.))
+
+    def test_new_waypoint_exceeds_reached_threshold(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        with patch('py_amr_ttb.lab3.planner.observed_travel', return_value=.26):
+            self.assertIsNone(planner.evaluate(0., scan(self.cfg), state.pose, state, None, 0.))
+        with patch('py_amr_ttb.lab3.planner.observed_travel', return_value=.31):
+            target, _, _ = planner.evaluate(0., scan(self.cfg), state.pose, state, None, 0.)
+            self.assertGreater(math.dist(target.point, state.pose[:2]), self.cfg.target_reached+.05)
+
+    def test_coverage_observation_expires_across_target_changes(self):
+        controller = MotionController(self.cfg)
+        def clearance(state, scan, v, w, now, diagnostics=None):
+            if diagnostics is not None:
+                diagnostics.update(hit_rejections=0, coverage_rejections=int(abs(v) > .004))
+            return abs(v) <= .004, [state.pose]
+        with patch.object(controller, 'safe', side_effect=clearance):
+            for now in (0., .2, 1., 2.1, 2.5):
+                state = RobotState((0., 0., 0.), 0., 0., now, now)
+                result = controller.step(state, scan(self.cfg, stamp=now),
+                                         Target((2.+now, .1)), now, .05)
+                self.assertEqual(result.v, 0.)
+                self.assertEqual(result.reason, 'OBSERVE' if now < 2. else 'OBSERVATION_EXHAUSTED')
+            result = controller.step(state, scan(self.cfg, stamp=now), Target((-2., 0.)), now, .05)
+            self.assertEqual(result.reason, 'OBSERVATION_EXHAUSTED')
+            self.assertEqual(result.w, 0.)
+
+    def test_clear_coverage_resumes_translation_after_observation(self):
+        controller = MotionController(self.cfg)
+        controller.observation_started = 0.
+        state = RobotState((0., 0., 0.), 0., 0., 3., 3.)
+        result = controller.step(state, scan(self.cfg, stamp=3.), Target((2., 0.)), 3., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertNotIn(result.reason, ('ALIGN', 'OBSERVE'))
+
+    def test_alignment_finishes_at_small_heading_error(self):
+        controller = MotionController(self.cfg)
+        first = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        result = controller.step(first, scan(self.cfg), Target((0., 2.)), 0., .05)
+        self.assertEqual(result.reason, 'ALIGN')
+        aligned = RobotState((0., 0., math.pi/2-.05), 0., 0., .1, .1)
+        result = controller.step(aligned, scan(self.cfg, pose=aligned.pose, stamp=.1),
+                                 Target((0., 2.)), .1, .05)
+        self.assertGreater(result.v, 0.)
+        self.assertFalse(controller.aligning)
 
     def test_acquisition_interpolation_and_signed_twist(self):
         state = StateTracker(self.cfg)

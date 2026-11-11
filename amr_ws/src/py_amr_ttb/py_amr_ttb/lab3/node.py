@@ -79,6 +79,7 @@ class Lab3Node(Node):
         self.last_tick = time.monotonic()
         self.last_submit = float('-inf')
         self.last_reason = None
+        self.last_target = None
         self.last_diagnostic_time = float('-inf')
         self.result = MotionResult()
         self.fault = None
@@ -204,6 +205,11 @@ class Lab3Node(Node):
         received_plan = take_latest(self.outgoing)
         if received_plan is not None:
             self.plan = received_plan
+            target_key = ((tuple(received_plan.target.point), received_plan.target.mode)
+                          if received_plan.target else None)
+            if target_key != self.last_target:
+                self.get_logger().info('NAV_TARGET '+json.dumps(target_key))
+                self.last_target = target_key
             for key in ('failure_capture', 'failure_capture_error'):
                 if key in received_plan.diagnostics:
                     self.get_logger().warning(key+' '+str(received_plan.diagnostics[key]))
@@ -244,7 +250,9 @@ class Lab3Node(Node):
         failure_details = {}
         if result.reason in ('NO_LOCAL_ROUTE', 'EMERGENCY_STOP', 'BRAKE_PATH_BLOCKED',
                              'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN',
-                             'CONTROL_DEADLINE', 'SEARCHING_ROUTE', 'OBSERVE'):
+                             'CONTROL_DEADLINE', 'SEARCHING_ROUTE', 'OBSERVE',
+                             'TRANSLATION_COVERAGE', 'TRANSLATION_OBSTACLE',
+                             'OBSERVATION_EXHAUSTED', 'ALIGN_BLOCKED'):
             failure_details = dict(
                 reason=result.reason,
                 odom_age=now-state.received if state else None,
@@ -267,7 +275,7 @@ class Lab3Node(Node):
                                        command_v=result.v, command_w=result.w,
                                        mode=plan.target.mode if plan and plan.target else '',
                                        reason=result.reason,
-                                       diagnostics=json.dumps(failure_details, default=str),
+                                       diagnostics=json.dumps(failure_details or result.diagnostics, default=str),
                                        plan_age=now-plan.created if plan else '',
                                        worker_seconds=plan.diagnostics.get('worker_seconds', '') if plan else '',
                                        control_seconds=time.monotonic()-started,
@@ -318,6 +326,7 @@ class Lab3Node(Node):
         self.tracker = StateTracker(self.cfg)
         self.scan = self.plan = self.fault = None
         self.scan_history.clear()
+        self.controller = MotionController(self.cfg)
         self.last_scan_stamp = self.last_submit = float('-inf')
         self.start_worker()
         self.paused = False

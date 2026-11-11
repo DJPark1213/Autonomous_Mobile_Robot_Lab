@@ -199,6 +199,10 @@ class Lab3Config:
     # ===============================================================
 
     rotate_threshold: float = 1.0
+    alignment_tolerance: float = 0.15
+    observation_duration: float = 2.0
+    observation_angle: float = 0.35
+    observation_speed: float = 0.20
     # Nearby walls can guide motion around corners while preserving separation.
     wall_trigger: float = 0.40
     wall_distance: float = 0.35
@@ -286,6 +290,10 @@ class Lab3Config:
             raise ValueError('sensor_timeout must span at least two control cycles')
         if self.target_min_distance >= self.target_distance or self.wall_distance <= self.radius:
             raise ValueError('Invalid target or wall clearance')
+        if self.target_reached + .05 >= self.target_distance:
+            raise ValueError('target_distance must exceed target_reached by more than 0.05 m')
+        if self.alignment_tolerance >= self.rotate_threshold or self.observation_speed > self.max_angular:
+            raise ValueError('Invalid alignment or observation limits')
         if self.revisit_min_age >= self.revisit_window:
             raise ValueError('revisit_min_age must be less than revisit_window')
         if self.prediction_step > self.control_period:

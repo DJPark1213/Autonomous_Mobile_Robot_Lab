@@ -88,6 +88,12 @@ class MotionController:
 
     def __init__(self, config):
         self.cfg = config
+        self.aligning = False
+        self.progress_anchor = None
+        self.observation_started = None
+        self.observation_last_yaw = None
+        self.observation_turn = 0.
+        self.observation_direction = 1.
 
     def safe(self, state, scan, v, w, now, diagnostics=None):
         """Obstacles can lie between predicted positions or along the
@@ -153,6 +159,14 @@ class MotionController:
 
         if target.mode == 'DONE':
             return MotionResult(reason='DONE')
+        if self.progress_anchor is None or math.dist(state.pose[:2], self.progress_anchor) >= c.progress_distance:
+            self.progress_anchor = tuple(state.pose[:2])
+            self.observation_started = None
+            self.observation_last_yaw = None
+            self.observation_turn = 0.
+        if self.observation_last_yaw is not None:
+            self.observation_turn += abs(normalize_angle(state.pose[2]-self.observation_last_yaw))
+            self.observation_last_yaw = state.pose[2]
 
         # 2. Steering needs the target's distance and angle relative to the robot now.
         local = inverse_points([target.point], state.pose)[0]
@@ -186,6 +200,14 @@ class MotionController:
 
         # 4. Larger heading errors request faster turning, up to the angular limit.
         desired_w = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
+        self.aligning = abs(heading) >= (c.alignment_tolerance if self.aligning else c.rotate_threshold)
+        details = dict(heading_error=heading, target_distance=distance,
+                       translation_rejection=None)
+        observation_exhausted = (self.observation_started is not None and (
+            now-self.observation_started >= c.observation_duration or
+            self.observation_turn >= c.observation_angle))
+        if self.aligning and observation_exhausted:
+            return MotionResult(reason='OBSERVATION_EXHAUSTED', blocked=True, diagnostics=details)
 
         # 5. Collect linear-speed limits with their reasons, then use the lowest.
         # A replay bend may lower the ordinary cruise-speed ceiling.
@@ -215,7 +237,7 @@ class MotionController:
             desired = -min(desired, c.reverse_speed)
             reason = 'REVERSE'
 
-        if abs(heading) >= c.rotate_threshold:
+        if self.aligning:
             desired, reason = 0., 'ALIGN'
             if abs(state.v) > .025:
                 # Brake translation before turning so the moving body does not
@@ -230,35 +252,42 @@ class MotionController:
         v = float(np.clip(v, -c.reverse_speed, c.max_linear))
         w = float(np.clip(w, -c.max_angular, c.max_angular))
 
-        # 8. A desirable speed may lack stopping room. Try slower commands with
-        # the same turn command; safe() predicts each from the measured current state.
-        for fraction in (1., .75, .5, .25):
-            trial = v*fraction
-            safe, trajectory = self.safe(state, scan, trial, w, now)
-            if safe and abs(trial) > .004:
-                return MotionResult(
-                    trial, w, reason if fraction == 1 else 'CLEARANCE', False, trajectory,
-                )
+        # 8. Validate the acceleration-limited translation once per cycle.
+        if self.aligning:
+            clear, trajectory = self.safe(state, scan, v, w, now, details)
+            return MotionResult(v if clear else 0., w if clear else 0.,
+                                reason if clear else 'ALIGN_BLOCKED', not clear, trajectory, details)
 
-        # 9. If travel failed, try turning in place only when almost stopped.
-        # Rotation still needs a clear predicted stopping sweep.
-        if abs(state.v) < .025:
-            safe, trajectory = self.safe(state, scan, 0., w, now)
-            if safe and abs(w) > .005:
-                return MotionResult(0., w, 'ALIGN', False, trajectory)
+        safe, trajectory = self.safe(state, scan, v, w, now, details)
+        if safe and abs(v) > .004:
+            return MotionResult(v, w, reason, False, trajectory, details)
+
+        # 9. Translation failure is distinct from heading alignment.
+        rejection = 'OBSTACLE' if details.get('hit_rejections', 0) else 'COVERAGE'
+        details['translation_rejection'] = rejection
 
         # 10. No travel or alignment command qualified. Request zero velocity and
         # tell planning it is blocked. Even this stop has residual motion: report
         # EMERGENCY_STOP if the predicted braking path itself fails clearance.
         diagnostics = {}
         safe, trajectory = self.safe(state, scan, 0., 0., now, diagnostics)
-        if (safe and abs(state.v) < .005 and diagnostics.get('unknown_beams', 0)):
-            observe_w = approach(state.w, .2 if heading >= 0 else -.2,
+        if (safe and abs(state.v) < .005 and rejection == 'COVERAGE'):
+            if self.observation_started is None:
+                self.observation_started = now
+                self.observation_last_yaw = state.pose[2]
+                self.observation_direction = 1. if heading >= 0 else -1.
+            details.update(observation_elapsed=now-self.observation_started,
+                           observation_turn=self.observation_turn)
+            if (now-self.observation_started >= c.observation_duration or
+                    self.observation_turn >= c.observation_angle):
+                return MotionResult(reason='OBSERVATION_EXHAUSTED', blocked=True,
+                                    trajectory=trajectory, diagnostics=details)
+            observe_w = approach(state.w, self.observation_direction*c.observation_speed,
                                  c.angular_acceleration, c.angular_braking, dt)
             clear, observation_path = self.safe(state, scan, 0., observe_w, now)
             if clear:
-                return MotionResult(0., observe_w, 'OBSERVE', False, observation_path, diagnostics)
+                return MotionResult(0., observe_w, 'OBSERVE', False, observation_path, details)
         return MotionResult(
-            0., 0., 'BRAKE_PATH_BLOCKED' if safe else 'EMERGENCY_STOP', True, trajectory,
-            diagnostics,
+            0., 0., 'TRANSLATION_'+rejection if safe else 'EMERGENCY_STOP', True, trajectory,
+            dict(details, stop_clearance=diagnostics),
         )

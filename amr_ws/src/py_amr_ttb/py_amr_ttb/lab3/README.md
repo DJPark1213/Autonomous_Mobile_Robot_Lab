@@ -43,7 +43,7 @@ flowchart LR
 | `geometry.py` | `process_scan()` preserves hits, valid no-return beams, and unknowns; `observed_travel()` checks robot-width travel; frame transforms and swept-circle tests. |
 | `mapping.py` | `integrate()` accumulates bounded free/occupied evidence once per scan; `closed_ahead()` checks for an observed capped pocket; `align()` accepts only sufficiently strong, unambiguous local scan matches. |
 | `planner.py` | Scores usable headings, holds reachable targets, selects wall following, commits to backtracking, and tracks replay waypoints. |
-| `motion.py` | Uses measured linear/angular velocity; tries a bounded set of forward speeds; predicts latency, acceleration, and a complete stop. Aligns in place when needed. |
+| `motion.py` | Uses measured velocities and validates one acceleration-limited translation per cycle; predicts latency and a complete stop. Separates heading alignment, blocked translation, and bounded observation. |
 | `memory.py` | Samples the trajectory, penalizes failed directions, chooses a verified return point, and atomically saves/loads an NPZ without pickle. |
 | `replay.py` | Trims loops and detours by estimated travel/turn time; checks full-footprint observed space, repairs tight corners locally, rounds corners when validated, and anticipates bend speeds. |
 | `worker.py` | Owns mapping/planning/persistence in a separate process. Provides the same `NavigationEngine` to simulation. |
@@ -202,10 +202,25 @@ section will be examined on a subsequent update. Selection can now accept the
 best candidate from a partial search rather than ranking every section first.
 
 Worker submissions respect map_period even after blockage. ALIGN and OBSERVE
-hold a target for at most one full-turn interval at max_angular before ordinary
-recovery resumes. OBSERVE requests a checked, slow in-place turn when translation
-fails with unknown beams and the predicted stop is clear. Sensor/compute waiting
-does not alone count as failed positional progress.
+hold a target during intentional turning. New targets have a commitment interval
+of at least stall_timeout, extended for large heading changes; sustained blockage
+or arrival can release it. Alignment begins at rotate_threshold and ends below
+alignment_tolerance (0.15 rad). A failed translation at a small heading error
+reports TRANSLATION_COVERAGE or TRANSLATION_OBSTACLE rather than ALIGN.
+
+OBSERVE requests a checked turn at up to 0.20 rad/s only after coverage rejects
+translation and the predicted stop is clear. Its allowance is 2 seconds or 0.35
+radians of accumulated measured turn. Time includes interruptions. Target changes
+do not restart the allowance. OBSERVATION_EXHAUSTED requests zero; further
+alignment is inhibited until actual positional progress or an explicit run reset.
+Fresh coverage can still permit translation toward an aligned target. The allowance
+resets after progress_distance of measured translation. These limits are startup
+parameters observation_speed, observation_duration, and observation_angle.
+
+New waypoints must exceed target_reached by at least 0.05 m as well as satisfy
+target_min_distance. NAV_TARGET logs target changes. CSV diagnostics include
+heading error, target distance, translation rejection, and observation progress.
+Sensor/compute waiting does not alone count as failed positional progress.
 
 Plans expire from their input snapshot time. completed_at and
 input_age_at_completion record computation delay separately. Before publishing,

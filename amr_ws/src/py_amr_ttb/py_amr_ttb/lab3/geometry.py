@@ -497,7 +497,7 @@ def circles_clear(scan, centers, radius, occupied_radius=0., occupied_center=(0.
     circles that cover movement between positions, not just endpoints.
     """
     return bool(circles_observed(scan, centers, radius, occupied_radius, occupied_center,
-                                 diagnostics).all())
+                                 diagnostics, prefix_only=True).all())
 
 
 def observed_travel(scan, heading, radius, cap, step=0.05):
