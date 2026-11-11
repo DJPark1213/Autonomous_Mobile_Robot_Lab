@@ -18,7 +18,7 @@ import time
 import numpy as np
 
 from py_amr_ttb.lab_config import Lab3Config
-from .geometry import process_scan, inverse_points
+from .geometry import process_scan
 from .motion import MotionController
 from .types import RobotState
 from .worker import NavigationEngine, Work
@@ -119,6 +119,8 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
     pose, v, w = start, 0., 0.
     scan = plan = None
     blocked = False
+    motion_reason = ''
+    feedback_target = None
     reasons, modes = Counter(), Counter()
     samples, durations = [], []
     minimum, peak = math.inf, 0.
@@ -131,14 +133,13 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
                                 config, pose=pose, stamp=now, received=now, sequence=tick)
         if tick % max(1, round(config.map_period/config.control_period)) == 0:
             began = time.perf_counter()
-            plan = engine.step(Work(state, scan, now, blocked))
+            plan = engine.step(Work(state, scan, now, blocked, motion_reason, feedback_target))
             durations.append(time.perf_counter()-began)
         target = plan.target if plan else None
-        if target is not None:
-            target = replace(target, point=tuple(inverse_points([target.point], plan.transform)[0]))
-        result = motion.step(state, scan, target, now, config.control_period,
-                             plan.diagnostics.get('speed_cap') if plan else None)
+        result = motion.step_plan(state, scan, plan, now, config.control_period)
         blocked = result.blocked
+        motion_reason = result.reason
+        feedback_target = target.key if target else None
         reasons[result.reason] += 1
         modes[target.mode if target else 'NONE'] += 1
         samples.append((now, *pose, v, w, result.v, result.w))

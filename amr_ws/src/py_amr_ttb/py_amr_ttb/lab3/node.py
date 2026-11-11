@@ -88,8 +88,10 @@ class Lab3Node(Node):
         self.last_submit = float('-inf')
         self.last_reason = None
         self.last_target = None
+        self.captured_failures = set()
         self.last_diagnostic_time = float('-inf')
         self.result = MotionResult()
+        self.result_target = None
         self.fault = None
         self.paused = False
         self.publisher = self.create_publisher(Twist, self.cfg.topic('cmd_vel'), 1)
@@ -218,9 +220,6 @@ class Lab3Node(Node):
             if target_key != self.last_target:
                 self.get_logger().info('NAV_TARGET '+json.dumps(target_key))
                 self.last_target = target_key
-            for key in ('failure_capture', 'failure_capture_error'):
-                if key in received_plan.diagnostics:
-                    self.get_logger().warning(key+' '+str(received_plan.diagnostics[key]))
         state, scan, plan = self.tracker.latest, self.scan, self.plan
         if self.coverage_future is not None and self.coverage_future.done():
             try:
@@ -244,6 +243,7 @@ class Lab3Node(Node):
                 if previous.sequence != scan.sequence
                 and 0 <= now-previous.received <= self.cfg.sensor_timeout))
         result = MotionResult(reason='WAITING_FOR_SENSORS')
+        controller_state = dict(aligning=self.controller.aligning, settling=self.controller.settling)
         # Missing prerequisites must not leave the previous motion command active.
         valid = (state is not None and scan is not None and self.tracker.fresh(now)
                  and 0 <= now-scan.received <= self.cfg.sensor_timeout)
@@ -259,27 +259,36 @@ class Lab3Node(Node):
         elif valid:
             if now-self.last_submit >= self.cfg.map_period:
                 if put_latest(self.incoming, Work(state, scan, now, self.result.blocked,
-                                                  self.result.reason)):
+                                                  self.result.reason, self.result_target)):
                     self.last_submit = now
             result = self.controller.step_plan(state, scan, plan, now, dt)
-        self.result = result
         finished = time.monotonic()
-        if finished-started > self.cfg.control_period or (valid and (
-                finished-state.received > self.cfg.sensor_timeout or
-                finished-scan.received > self.cfg.sensor_timeout)):
+        if finished-started > self.cfg.control_period:
             result = MotionResult(reason='CONTROL_DEADLINE', diagnostics={
                 'elapsed': finished-started, 'budget': self.cfg.control_period})
-            self.result = result
+        elif (result.v or result.w) and finished > result.diagnostics['valid_until']:
+            result = MotionResult(reason='COMMAND_EXPIRED', diagnostics=dict(
+                result.diagnostics, checked_at=finished, rejected_v=result.v, rejected_w=result.w))
+        self.result = result
+        self.result_target = plan.target.key if plan and plan.target else None
         self.publish(result.v, result.w)
+        if result.reason in ('TRANSLATION_COVERAGE', 'TRANSLATION_OBSTACLE',
+                             'EMERGENCY_STOP', 'ALIGN_BLOCKED') and result.reason not in self.captured_failures:
+            path = self.telemetry.capture(result.reason, dict(
+                config=self.cfg, state=state, scan=scan, plan=plan,
+                now=now, dt=dt, controller_state=controller_state, result=result))
+            if path is not None:
+                self.captured_failures.add(result.reason)
+                self.get_logger().warning('Exact motion failure queued: '+str(path))
         if result.reason != self.last_reason:
             self.get_logger().info(result.reason)
             self.last_reason = result.reason
         failure_details = {}
-        if result.reason in ('NO_LOCAL_ROUTE', 'EMERGENCY_STOP', 'BRAKE_PATH_BLOCKED',
+        if result.reason in ('NO_LOCAL_ROUTE', 'RECOVERY_STALLED', 'EMERGENCY_STOP', 'BRAKE_PATH_BLOCKED',
                              'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN',
-                             'CONTROL_DEADLINE', 'SEARCHING_ROUTE', 'OBSERVE',
+                             'CONTROL_DEADLINE', 'COMMAND_EXPIRED', 'SEARCHING_ROUTE', 'BRAKE_ROTATION',
                              'TRANSLATION_COVERAGE', 'TRANSLATION_OBSTACLE',
-                             'OBSERVATION_EXHAUSTED', 'ALIGN_BLOCKED', 'WAITING_FOR_COVERAGE'):
+                             'ALIGN_BLOCKED', 'WAITING_FOR_COVERAGE'):
             failure_details = dict(
                 reason=result.reason,
                 odom_age=now-state.received if state else None,
@@ -355,10 +364,13 @@ class Lab3Node(Node):
         self.tracker = StateTracker(self.cfg)
         self.scan = self.plan = self.fault = None
         self.scan_history.clear()
+        self.captured_failures.clear()
         self.coverage_epoch += 1
         self.prepared_coverage = None
         self.coverage_sequence = -1
         self.controller = MotionController(self.cfg)
+        self.result = MotionResult()
+        self.result_target = None
         self.last_scan_stamp = self.last_submit = float('-inf')
         self.start_worker()
         self.paused = False

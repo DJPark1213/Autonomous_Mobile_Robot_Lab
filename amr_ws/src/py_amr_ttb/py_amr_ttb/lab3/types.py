@@ -94,6 +94,10 @@ class Target:
     reverse: bool = False
     wall_side: int = 0
 
+    @property
+    def key(self):
+        return tuple(self.point), self.mode, self.reverse
+
 
 @dataclass
 class MotionResult:

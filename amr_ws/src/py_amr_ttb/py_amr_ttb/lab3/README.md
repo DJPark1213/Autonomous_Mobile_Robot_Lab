@@ -42,8 +42,8 @@ flowchart LR
 | `state.py` | `StateTracker.update()` keeps signed measured motion in the initial frame; `pose_at()` interpolates laser-time pose. `PoseEstimator` predicts a planar pose/covariance from odometry and applies gated Kalman corrections from accepted scan matches. |
 | `geometry.py` | `process_scan()` preserves hits, valid no-return beams, and unknowns; `observed_travel()` checks robot-width travel; frame transforms and swept-circle tests. |
 | `mapping.py` | `integrate()` accumulates bounded free/occupied evidence once per scan; `closed_ahead()` checks for an observed capped pocket; `align()` accepts only sufficiently strong, unambiguous local scan matches. |
-| `planner.py` | Scores usable headings, holds reachable targets, selects wall following, commits to backtracking, and tracks replay waypoints. |
-| `motion.py` | Uses measured velocities and validates one acceleration-limited translation per cycle; predicts latency and a complete stop. Separates heading alignment, blocked translation, and bounded observation. |
+| `planner.py` | Scores usable headings, holds reachable targets, commits to backtracking, and tracks replay waypoints. |
+| `motion.py` | Uses measured velocities and validates one acceleration-limited translation per cycle; predicts latency and a complete stop. Separates heading alignment, angular braking, and translation rejection. |
 | `memory.py` | Samples the trajectory, penalizes failed directions, chooses a verified return point, and atomically saves/loads an NPZ without pickle. |
 | `replay.py` | Trims loops and detours by estimated travel/turn time; checks full-footprint observed space, repairs tight corners locally, rounds corners when validated, and anticipates bend speeds. |
 | `worker.py` | Owns mapping/planning/persistence in a separate process. Provides the same `NavigationEngine` to simulation. |
@@ -92,10 +92,9 @@ are easy to distinguish.
    capped pocket. Encountering unknown cells or reaching the search budget means
    **unresolved**, not closed. This is a conservative local test, not a complete
    maze topology proof.
-5. Hold the map-frame target for a decision interval. Reconsider early when it is
-   close or blocked. Short usable travel can request tangent/radial wall following;
-   a better opening competes at the next decision. The controller still checks
-   every command against the current scan.
+5. Hold the map-frame target through alignment and travel. Reconsider on arrival,
+   sustained blockage, a verified capped route, or a stall. The controller checks
+   every command against current sensing.
 6. A stall, return to a recent location, or a confirmed cap triggers recovery.
    Backtracking stays committed until near its return point or blocked. Failed
    directions are penalized both at the failed position and the return point.
@@ -134,7 +133,8 @@ Both launches accept `run_file:=/absolute/path/course.npz`. The default is
 geometry/footprint/goal, and a convincing initial LiDAR alignment. The default
 start search is +/-0.30 m and +/-0.10 rad. An ambiguous start remains stopped
 with `ALIGNMENT_REQUIRED`; reposition the robot into recognizable geometry.
-Replay saves its result as `course.replay.npz`, preserving the learned course.
+Replay saves its result as `course.replay.npz`. Incomplete learning runs save to
+`course.incomplete.npz`. A completed learning run is saved at `course.npz`.
 
 Services:
 
@@ -168,10 +168,10 @@ calibration. Zero score weights are permitted.
 | Speed and turn limits | `max_linear=0.30`, `max_angular=1.4`, `reverse_speed=0.08` |
 | Physical response | `linear_acceleration=0.4`, `linear_braking=0.5`, `angular_acceleration=1.8`, `angular_braking=2.2`, `command_latency=0.10` |
 | Footprint | `robot_radius=0.18`, `safety_margin=0.04`, extra `route_margin=0.10` for replay shortcuts |
-| Timing | control 0.05 s, map 0.20 s, decision 0.50 s; sensors expire at 0.40 s and plans at 1.50 s |
+| Timing | control 0.05 s, map 0.20 s, blockage threshold at least `decision_period=0.50` s. Sensors expire at 0.40 s and plans at 1.50 s. |
 | Lookahead | `scoring_horizon=1.5`, `target_distance=1.0`, `target_min_distance=0.15`, `target_reached=0.18` |
 | Score weights | goal .40, travel .30, clearance .10, heading .10, rotation .10, history .35 |
-| Switching / wall behavior | `switch_margin=0.10`, `wall_trigger=0.40`, `wall_distance=0.35`, `wall_gain=3.0` |
+| Slower candidate | `minimum_translation_speed=0.01` m/s is a provisional floor for the fallback candidate. Measure the base's useful speed before tuning it. |
 | Recovery | `stall_timeout=3.0`, `progress_distance=0.15`, `backtrack_distance=0.70`, `attempt_radius=0.45` |
 | Map | 0.05 m cells over 24 x 24 m; origin (-6,-12); bounded log-odds evidence |
 | Pose uncertainty | `odom_translation_noise=0.03`, `odom_rotation_noise=0.04`, `alignment_position_noise=0.04`, `alignment_heading_noise=0.04`; innovation gate `11.34` |
@@ -215,35 +215,41 @@ budget: a section and mapping can exceed it. SEARCHING_ROUTE means another
 section will be examined on a subsequent update. Selection can now accept the
 best candidate from a partial search rather than ranking every section first.
 
-Worker submissions respect map_period even after blockage. ALIGN and OBSERVE
-hold a target during intentional turning. New targets have a commitment interval
-of at least stall_timeout, extended for large heading changes; sustained blockage
-or arrival can release it. Alignment begins at rotate_threshold and ends below
-alignment_tolerance (0.15 rad). A failed translation at a small heading error
-reports TRANSLATION_COVERAGE or TRANSLATION_OBSTACLE rather than ALIGN.
+Worker submissions respect map_period even after blockage. A single target
+commitment interval holds a waypoint through transient stops. Alignment begins at
+rotate_threshold and ends below alignment_tolerance (0.15 rad). When aligned,
+After deliberate alignment, BRAKE_ROTATION requests zero until measured angular
+speed falls below angular_settle_speed (0.15 rad/s). Normal tracking can steer
+continuously. If the initial translation fails, the controller checks one slower
+candidate. When both fail, it reports TRANSLATION_COVERAGE or TRANSLATION_OBSTACLE
+and checks the predicted stop. The next cycle can drive when fresh coverage supports it.
 
-OBSERVE requests a checked turn at up to 0.20 rad/s only after coverage rejects
-translation and the predicted stop is clear. Its allowance is 2 seconds or 0.35
-radians of accumulated measured turn. Time includes interruptions. Target changes
-do not restart the allowance. OBSERVATION_EXHAUSTED requests zero; further
-alignment is inhibited until actual positional progress or an explicit run reset.
-Fresh coverage can still permit translation toward an aligned target. The allowance
-resets after progress_distance of measured translation. These limits are startup
-parameters observation_speed, observation_duration, and observation_angle.
+The planner accumulates blocked samples for the attempted waypoint across brief
+interruptions. It tracks progress in odometry and scales the required displacement
+for slower reverse travel. A stalled backtrack is released, and RECOVERY_STALLED
+reports that the subsequent search found no verified alternative. The planner
+checks for known caps at both the current position and candidate waypoint. Replay
+can rejoin its next saved waypoint with the normal footprint check when the extra
+shortcut margin is unavailable. Live stopping-sweep checks still apply.
 
 New waypoints must exceed target_reached by at least 0.05 m as well as satisfy
 target_min_distance. NAV_TARGET logs target changes. CSV diagnostics include
-heading error, target distance, translation rejection, and observation progress.
-Sensor/compute waiting does not alone count as failed positional progress.
+heading error, target distance, and translation rejection.
+Sensor and compute waiting are distinguished from route blockage.
 
 Plans expire from their input snapshot time. completed_at and
 input_age_at_completion record computation delay separately. Before publishing,
-the node rechecks elapsed control time and sensor receipt ages. An overrun sends
-zero with CONTROL_DEADLINE. This check cannot preempt a running Python callback
+the node checks elapsed control time and the earliest expiry of the plan, raw
+sensors, and eligible coverage sources used for the command. An overrun sends
+zero with CONTROL_DEADLINE. Expired evidence sends zero with COMMAND_EXPIRED.
+This check cannot preempt a running Python callback
 or retract the previous command during that callback; hard real-time execution
 has not been established.
 
-Failure JSON captures include scan history. NAV_DIAGNOSTIC includes coverage,
+Exact motion-failure JSON captures include scan history, the rejected result, and
+its state/scan/plan/time/dt, controller state, and attempted translation commands.
+The telemetry writer saves them beside the matching
+CSV. Worker snapshots of the following cycle are no longer used for that purpose. NAV_DIAGNOSTIC includes coverage,
 obstacle, history, timing, and planner-search details. Captured-frame replay and
 unit tests do not establish sustained progress under live ROS scheduling.
 

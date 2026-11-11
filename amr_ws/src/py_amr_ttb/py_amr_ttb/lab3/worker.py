@@ -5,8 +5,7 @@ Use a separate process with bounded latest-work queues. NavigationEngine also ru
 directly in simulation; worker errors produce stop plans.
 """
 
-from dataclasses import dataclass, asdict
-import json
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Full
 import time
@@ -33,6 +32,7 @@ class Work:
     now: float
     blocked: bool = False
     motion_reason: str = ''
+    feedback_target: tuple | None = None
 
 
 def put_latest(queue, value):
@@ -122,7 +122,7 @@ class NavigationEngine:
             self.mapper.update(work.scan, work.state.covariance)
             self.last_map = work.now
         plan = self.planner.step(work.state, work.scan, self.mapper, work.now, work.blocked,
-                                 work.motion_reason)
+                                 work.motion_reason, work.feedback_target)
         plan.diagnostics = dict(plan.diagnostics, worker_seconds=time.perf_counter()-started,
                                 alignment=self.mapper.alignment,
                                 pose_variance=self.mapper.estimator.covariance.diagonal().tolist())
@@ -140,6 +140,8 @@ class NavigationEngine:
         destination = Path(self.cfg.run_file).expanduser()
         if self.cfg.run_mode == 'replay':
             destination = destination.with_name(destination.stem+'.replay.npz')
+        elif not self.memory.complete:
+            destination = destination.with_name(destination.stem+'.incomplete.npz')
         self.memory.save(destination, self.mapper.grid, self.mapper.transform)
 
 
@@ -152,8 +154,6 @@ def worker_main(config, incoming, outgoing, stopping, save_requested):
     experience exists.
     """
     engine = None
-    captured = set()
-    capture_id = time.time_ns()
     try:
         engine = NavigationEngine(config)
         while not stopping.is_set():
@@ -167,22 +167,8 @@ def worker_main(config, incoming, outgoing, stopping, save_requested):
             newer = take_latest(incoming)
             work = newer if newer is not None else work
             plan = engine.step(work)
-            failure = 'blocked_motion' if work.blocked else plan.status
-            if failure in ('NO_LOCAL_ROUTE', 'blocked_motion') and failure not in captured:
-                captured.add(failure)
-                try:
-                    directory = Path(config.log_dir).expanduser()
-                    directory.mkdir(parents=True, exist_ok=True)
-                    path = directory / f'failure-{capture_id}-{failure}.json'
-                    payload = dict(config=asdict(config), work=asdict(work), plan=asdict(plan))
-                    path.write_text(json.dumps(payload, default=lambda value: value.tolist()),
-                                    encoding='utf-8')
-                    plan.diagnostics['failure_capture'] = str(path)
-                except Exception as error:
-                    plan.diagnostics['failure_capture_error'] = str(error)
-            # A plan's expiry starts when the worker produces it. Its target is
-            # subsequently checked against current odometry and scans by motion
-            # control. Keep input age visible separately from result freshness.
+            # Keep the input timestamp as the plan's expiry reference.
+            # Record computation delay separately for diagnosis.
             completed = time.monotonic()
             plan.diagnostics['input_age_at_completion'] = completed-work.now
             plan.diagnostics['completed_at'] = completed

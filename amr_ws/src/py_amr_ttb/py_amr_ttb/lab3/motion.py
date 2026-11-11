@@ -89,11 +89,7 @@ class MotionController:
     def __init__(self, config):
         self.cfg = config
         self.aligning = False
-        self.progress_anchor = None
-        self.observation_started = None
-        self.observation_last_yaw = None
-        self.observation_turn = 0.
-        self.observation_direction = 1.
+        self.settling = False
 
     def safe(self, state, scan, v, w, now, diagnostics=None):
         """Obstacles can lie between predicted positions or along the
@@ -141,7 +137,16 @@ class MotionController:
         if plan.target is None:
             return MotionResult(reason=plan.status)
         target = replace(plan.target, point=tuple(inverse_points([plan.target.point], plan.transform)[0]))
-        return self.step(state, scan, target, now, dt, plan.diagnostics.get('speed_cap'))
+        result = self.step(state, scan, target, now, dt, plan.diagnostics.get('speed_cap'))
+        if result.v or result.w:
+            timeout = self.cfg.sensor_timeout
+            receipts = scan.coverage.receipts if scan.coverage is not None else (
+                previous.received for previous in scan.history)
+            sensor_receipts = [state.received, scan.received]
+            sensor_receipts.extend(receipt for receipt in receipts if 0 <= now-receipt <= timeout)
+            sensor_expiry = min(sensor_receipts)+timeout
+            result.diagnostics['valid_until'] = min(sensor_expiry, plan.created+self.cfg.plan_timeout)
+        return result
 
     def step(self, state, scan, target, now, dt, speed_cap=None):
         """A reachable target can still require slowing, alignment or a stop.
@@ -165,15 +170,6 @@ class MotionController:
 
         if target.mode == 'DONE':
             return MotionResult(reason='DONE')
-        if self.progress_anchor is None or math.dist(state.pose[:2], self.progress_anchor) >= c.progress_distance:
-            self.progress_anchor = tuple(state.pose[:2])
-            self.observation_started = None
-            self.observation_last_yaw = None
-            self.observation_turn = 0.
-        if self.observation_last_yaw is not None:
-            self.observation_turn += abs(normalize_angle(state.pose[2]-self.observation_last_yaw))
-            self.observation_last_yaw = state.pose[2]
-
         # 2. Steering needs the target's distance and angle relative to the robot now.
         local = inverse_points([target.point], state.pose)[0]
         distance = float(np.linalg.norm(local))
@@ -184,37 +180,13 @@ class MotionController:
         if target.reverse:
             heading = normalize_angle(heading-math.pi)
 
-        # 3. Wall following needs a direction along the wall plus a correction
-        # toward the desired separation, instead of steering only at the target.
-        if target.mode == 'FOLLOW_WALL' and len(scan.points):
-            # The robot may have moved since acquisition; compare hits in its frame now.
-            points = inverse_points(transform_points(scan.points, scan.pose), state.pose)
-            side = points[:, 1]*target.wall_side > 0
-            if side.any():
-                candidates = points[side]
-                nearest = candidates[np.argmin(np.linalg.norm(candidates, axis=1))]
-                separation = np.linalg.norm(nearest)
-
-                # normal points away from the nearest hit; tangent runs along the wall.
-                # The separation error pushes away when too close and toward it when far.
-                normal = -nearest/max(separation, 1e-9)
-                tangent = target.wall_side*np.array([-normal[1], normal[0]])
-                vector = tangent+np.clip(
-                    c.wall_gain*(c.wall_distance-separation), -.7, .7,
-                )*normal
-                heading = math.atan2(vector[1], vector[0])
-
         # 4. Larger heading errors request faster turning, up to the angular limit.
         desired_w = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
-        self.aligning = abs(heading) >= (c.alignment_tolerance if self.aligning else c.rotate_threshold)
+        was_aligning = self.aligning
+        self.aligning = abs(heading) >= (c.alignment_tolerance if was_aligning else c.rotate_threshold)
+        self.settling = not self.aligning and (was_aligning or self.settling)
         details = dict(heading_error=heading, target_distance=distance,
                        translation_rejection=None)
-        observation_exhausted = (self.observation_started is not None and (
-            now-self.observation_started >= c.observation_duration or
-            self.observation_turn >= c.observation_angle))
-        if self.aligning and observation_exhausted:
-            return MotionResult(reason='OBSERVATION_EXHAUSTED', blocked=True, diagnostics=details)
-
         # 5. Collect linear-speed limits with their reasons, then use the lowest.
         # A replay bend may lower the ordinary cruise-speed ceiling.
         top = min(c.max_linear, c.max_linear if speed_cap is None else speed_cap)
@@ -251,6 +223,14 @@ class MotionController:
                 desired_w = 0.
                 reason = 'BRAKE_FOR_TURN'
 
+        # Complete angular braking before accelerating along the waypoint.
+        # This phase emits a stop request; rollout still checks residual motion.
+        if self.settling and abs(state.w) > c.angular_settle_speed:
+            clear, trajectory = self.safe(state, scan, 0., 0., now, details)
+            return MotionResult(reason='BRAKE_ROTATION' if clear else 'EMERGENCY_STOP',
+                                blocked=not clear, trajectory=trajectory, diagnostics=details)
+        self.settling = False
+
         # 7. Normal command changes respect acceleration and braking limits.
         # Start from measured speeds, since the previous command may not be achieved yet.
         v = approach(state.v, desired, c.linear_acceleration, c.linear_braking, dt)
@@ -258,15 +238,26 @@ class MotionController:
         v = float(np.clip(v, -c.reverse_speed, c.max_linear))
         w = float(np.clip(w, -c.max_angular, c.max_angular))
 
-        # 8. Validate the acceleration-limited translation once per cycle.
+        # 8. Validate the command and at most one slower translation.
         if self.aligning:
             clear, trajectory = self.safe(state, scan, v, w, now, details)
             return MotionResult(v if clear else 0., w if clear else 0.,
                                 reason if clear else 'ALIGN_BLOCKED', not clear, trajectory, details)
 
-        safe, trajectory = self.safe(state, scan, v, w, now, details)
-        if safe and abs(v) > .004:
-            return MotionResult(v, w, reason, False, trajectory, details)
+        attempts = []
+        details['attempted_commands'] = attempts
+        slower = math.copysign(max(c.minimum_translation_speed, abs(v)/2), v)
+        candidates = (v, slower) if abs(slower) < abs(v) else (v,)
+        for candidate in candidates:
+            checks = {}
+            safe, trajectory = self.safe(state, scan, candidate, w, now, checks)
+            attempts.append(dict(v=candidate, w=w, clear=safe, **checks))
+            details.update(checks)
+            if safe:
+                if abs(candidate) <= .004:
+                    return MotionResult(reason=reason, trajectory=trajectory, diagnostics=details)
+                return MotionResult(candidate, w, reason if candidate == v else 'CLEARANCE',
+                                    False, trajectory, details)
 
         # 9. Translation failure is distinct from heading alignment.
         rejection = 'OBSTACLE' if details.get('hit_rejections', 0) else 'COVERAGE'
@@ -277,22 +268,6 @@ class MotionController:
         # EMERGENCY_STOP if the predicted braking path itself fails clearance.
         diagnostics = {}
         safe, trajectory = self.safe(state, scan, 0., 0., now, diagnostics)
-        if (safe and abs(state.v) < .005 and rejection == 'COVERAGE'):
-            if self.observation_started is None:
-                self.observation_started = now
-                self.observation_last_yaw = state.pose[2]
-                self.observation_direction = 1. if heading >= 0 else -1.
-            details.update(observation_elapsed=now-self.observation_started,
-                           observation_turn=self.observation_turn)
-            if (now-self.observation_started >= c.observation_duration or
-                    self.observation_turn >= c.observation_angle):
-                return MotionResult(reason='OBSERVATION_EXHAUSTED', blocked=True,
-                                    trajectory=trajectory, diagnostics=details)
-            observe_w = approach(state.w, self.observation_direction*c.observation_speed,
-                                 c.angular_acceleration, c.angular_braking, dt)
-            clear, observation_path = self.safe(state, scan, 0., observe_w, now)
-            if clear:
-                return MotionResult(0., observe_w, 'OBSERVE', False, observation_path, details)
         return MotionResult(
             0., 0., 'TRANSLATION_'+rejection if safe else 'EMERGENCY_STOP', True, trajectory,
             dict(details, stop_clearance=diagnostics),

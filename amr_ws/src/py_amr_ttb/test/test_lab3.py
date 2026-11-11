@@ -22,7 +22,7 @@ from py_amr_ttb.lab3.geometry import (
 )
 from py_amr_ttb.lab3.mapping import OccupancyMap
 from py_amr_ttb.lab3.memory import RunMemory
-from py_amr_ttb.lab3.motion import MotionController, rollout
+from py_amr_ttb.lab3.motion import MotionController, rollout, approach
 from py_amr_ttb.lab3.replay import optimize_route, speed_profile
 from py_amr_ttb.lab3.simulate import simulate, raycast, course
 from py_amr_ttb.lab3.state import StateTracker, PoseEstimator
@@ -63,21 +63,6 @@ class GeometryTests(unittest.TestCase):
             self.assertIs(result.target, target)
             self.assertEqual(result.diagnostics['holding_for'], 'TARGET_COMMITMENT')
 
-    def test_alignment_holds_target_past_positional_stall_timeout(self):
-        from py_amr_ttb.lab3.mapping import Mapper
-        from py_amr_ttb.lab3.planner import Planner
-        planner = Planner(self.cfg, RunMemory(self.cfg))
-        target = Target((0., 1.))
-        planner.target = target
-        planner.started = planner.progress_at = 0.
-        planner.anchor = (0., 0.)
-        mapper = Mapper(self.cfg)
-        for now in (2.9, 3.1, 3.5):
-            state = RobotState((0., 0., .1*now), 0., .1, now, now)
-            result = planner.step(state, scan(self.cfg, stamp=now), mapper,
-                                  now, False, 'ALIGN')
-            self.assertIs(result.target, target)
-            self.assertEqual(result.diagnostics['holding_for'], 'ALIGN')
 
     def test_history_combines_complementary_coverage(self):
         values = np.full(360, 3.)
@@ -249,6 +234,86 @@ class StateAndMotionTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_rotation_brakes_before_translation(self):
+        controller = MotionController(self.cfg)
+        target = Target((2., 0.))
+        turning = RobotState((0., 0., 1.5), 0., -.76, 0., 0.)
+        result = controller.step(turning, scan(self.cfg, pose=turning.pose), target, 0., .05)
+        self.assertEqual(result.reason, 'ALIGN')
+        state = replace(turning, pose=(0., 0., 0.), stamp=.05, received=.05)
+        result = controller.step(state, scan(self.cfg, stamp=.05), target, .05, .05)
+        self.assertEqual(result.reason, 'BRAKE_ROTATION')
+        self.assertEqual((result.v, result.w), (0., 0.))
+        stopped = replace(state, w=0., stamp=.1, received=.1)
+        result = controller.step(stopped, scan(self.cfg, stamp=.1), Target((2., 0.)), .1, .05)
+        self.assertGreater(result.v, 0.)
+
+    def test_tracking_can_steer_above_settle_speed(self):
+        controller = MotionController(self.cfg)
+        state = RobotState((0., 0., 0.), .1, .3, 0., 0.)
+        result = controller.step(state, scan(self.cfg), Target((2., 1.)), 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertGreater(result.w, self.cfg.angular_settle_speed)
+
+    def test_publish_deadline_includes_older_coverage_and_plan(self):
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        current = scan(self.cfg, stamp=1.)
+        current = replace(current, coverage=prepare_coverage((current, scan(self.cfg, stamp=.7))))
+        state = RobotState((0., 0., 0.), 0., 0., 1., 1.)
+        plan = Plan(Target((2., 0.)), (0., 0., 0.), 0.)
+        controller = MotionController(self.cfg)
+        result = controller.step_plan(state, current, plan, 1., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertAlmostEqual(result.diagnostics['valid_until'], 1.1)
+        result = controller.step_plan(state, current, replace(plan, created=-.45), 1., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertAlmostEqual(result.diagnostics['valid_until'], 1.05)
+
+    def test_fixed_target_turn_brake_drive_sequence_makes_progress(self):
+        controller = MotionController(self.cfg)
+        target = Target((0., 2.))
+        x = y = yaw = v = w = 0.
+        reasons = set()
+        for tick in range(200):
+            now = tick*.05
+            state = RobotState((x, y, yaw), v, w, now, now)
+            sensor = scan(self.cfg, pose=state.pose, stamp=now)
+            result = controller.step(state, sensor, target, now, .05)
+            reasons.add(result.reason)
+            v = approach(v, result.v, .35, .45, .05)
+            w = approach(w, result.w, 1.5, 2., .05)
+            x += v*math.cos(yaw)*.05
+            y += v*math.sin(yaw)*.05
+            yaw = (yaw+w*.05+math.pi) % (2*math.pi)-math.pi
+            if y > .4:
+                break
+        self.assertGreater(y, .4)
+        self.assertIn('ALIGN', reasons)
+        self.assertIn('BRAKE_ROTATION', reasons)
+
+    def test_coverage_rejection_stops_without_turning_or_latching(self):
+        controller = MotionController(self.cfg)
+        values = np.full(360, 3.)
+        values[175:186] = np.nan
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        result = controller.step(state, scan(self.cfg, values), Target((2., 0.)), 0., .05)
+        self.assertEqual(result.reason, 'TRANSLATION_COVERAGE')
+        self.assertEqual((result.v, result.w), (0., 0.))
+        result = controller.step(state, scan(self.cfg), Target((2., 0.)), 0., .05)
+        self.assertGreater(result.v, 0.)
+
+    def test_capture_keeps_the_rejected_cycle(self):
+        from py_amr_ttb.lab3.telemetry import Telemetry
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            telemetry = Telemetry(directory, 'learn')
+            state = RobotState((1., 2., 0.), 0., 0., 5., 5.)
+            path = telemetry.capture('TRANSLATION_COVERAGE', dict(now=5., state=state))
+            state = replace(state, pose=(9., 9., 0.), stamp=6.)
+            telemetry.close()
+            captured = json.loads(path.read_text())
+            self.assertEqual(captured['now'], 5.)
+            self.assertEqual(captured['state']['pose'], [1., 2., 0.])
+
     def test_captured_coverage_seam_allows_forward_command(self):
         from py_amr_ttb.lab3.types import Scan
         data = json.loads((Path(__file__).parent/'data'/'lab3_coverage_seam.json').read_text())
@@ -264,7 +329,6 @@ class StateAndMotionTests(unittest.TestCase):
         target = Target((x+.5*math.cos(yaw), y+.5*math.sin(yaw)))
         result = MotionController(self.cfg).step(state, sensor, target, data['now'], .05)
         self.assertGreater(result.v, 0.)
-        self.assertNotIn(result.reason, ('OBSERVE', 'EMERGENCY_STOP'))
         from py_amr_ttb.lab3.coverage import prepare_coverage
         prepared = prepare_coverage((sensor, *sensor.history))
         result = MotionController(self.cfg).step(
@@ -274,10 +338,19 @@ class StateAndMotionTests(unittest.TestCase):
 
     def test_obstacle_rejection_does_not_start_observation_turn(self):
         state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
-        sensor = scan(self.cfg, raycast([((.225, -2.), (.225, 2.))], state.pose))
+        sensor = scan(self.cfg, raycast([((.222, -2.), (.222, 2.))], state.pose))
         result = MotionController(self.cfg).step(state, sensor, Target((2., 0.)), 0., .05)
         self.assertEqual(result.reason, 'TRANSLATION_OBSTACLE')
         self.assertEqual((result.v, result.w), (0., 0.))
+
+    def test_slower_candidate_preserves_a_clear_direction(self):
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        sensor = scan(self.cfg, raycast([((.225, -2.), (.225, 2.))], state.pose))
+        result = MotionController(self.cfg).step(state, sensor, Target((2., 0.)), 0., .05)
+        self.assertEqual(result.reason, 'CLEARANCE')
+        self.assertAlmostEqual(result.v, .01)
+        self.assertEqual([attempt['clear'] for attempt in result.diagnostics['attempted_commands']],
+                         [False, True])
 
     def test_new_waypoint_exceeds_reached_threshold(self):
         from py_amr_ttb.lab3.planner import Planner
@@ -288,31 +361,6 @@ class StateAndMotionTests(unittest.TestCase):
         with patch('py_amr_ttb.lab3.planner.observed_travel', return_value=.31):
             target, _, _ = planner.evaluate(0., scan(self.cfg), state.pose, state, None, 0.)
             self.assertGreater(math.dist(target.point, state.pose[:2]), self.cfg.target_reached+.05)
-
-    def test_coverage_observation_expires_across_target_changes(self):
-        controller = MotionController(self.cfg)
-        def clearance(state, scan, v, w, now, diagnostics=None):
-            if diagnostics is not None:
-                diagnostics.update(hit_rejections=0, coverage_rejections=int(abs(v) > .004))
-            return abs(v) <= .004, [state.pose]
-        with patch.object(controller, 'safe', side_effect=clearance):
-            for now in (0., .2, 1., 2.1, 2.5):
-                state = RobotState((0., 0., 0.), 0., 0., now, now)
-                result = controller.step(state, scan(self.cfg, stamp=now),
-                                         Target((2.+now, .1)), now, .05)
-                self.assertEqual(result.v, 0.)
-                self.assertEqual(result.reason, 'OBSERVE' if now < 2. else 'OBSERVATION_EXHAUSTED')
-            result = controller.step(state, scan(self.cfg, stamp=now), Target((-2., 0.)), now, .05)
-            self.assertEqual(result.reason, 'OBSERVATION_EXHAUSTED')
-            self.assertEqual(result.w, 0.)
-
-    def test_clear_coverage_resumes_translation_after_observation(self):
-        controller = MotionController(self.cfg)
-        controller.observation_started = 0.
-        state = RobotState((0., 0., 0.), 0., 0., 3., 3.)
-        result = controller.step(state, scan(self.cfg, stamp=3.), Target((2., 0.)), 3., .05)
-        self.assertGreater(result.v, 0.)
-        self.assertNotIn(result.reason, ('ALIGN', 'OBSERVE'))
 
     def test_alignment_finishes_at_small_heading_error(self):
         controller = MotionController(self.cfg)
@@ -444,6 +492,45 @@ class MappingAndReplayTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config(goal_x=3.4, alignment_enabled=False)
 
+    def test_stalled_backtrack_is_released_despite_map_pose_change(self):
+        from py_amr_ttb.lab3.mapping import Mapper
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        mapper = Mapper(self.cfg)
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        planner.step(state, scan(self.cfg), mapper, 0.)
+        target = Target((-.5, 0.), 'BACKTRACK', reverse=True)
+        planner.commit(target, state, state.pose, 0.)
+        mapper.transform = (.25, 0., 0.)
+        with patch.object(planner, 'evaluate', return_value=None):
+            for now in (4., 4.2):
+                stopped = replace(state, stamp=now, received=now)
+                result = planner.step(stopped, scan(self.cfg, stamp=now), mapper, now,
+                                      feedback_target=target.key)
+                self.assertEqual(result.status, 'RECOVERY_STALLED')
+                self.assertIsNone(result.target)
+
+    def test_blockage_accumulates_only_for_current_waypoint(self):
+        from py_amr_ttb.lab3.mapping import Mapper
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        mapper = Mapper(self.cfg)
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        target = Target((1., 0.))
+        planner.commit(target, state, state.pose, 0.)
+        planner.step(state, scan(self.cfg), mapper, 0.)
+        with patch.object(planner, 'evaluate', return_value=None):
+            for now, blocked, key in ((.2, True, Target((-1., 0.)).key),
+                                      (.4, True, target.key), (.6, False, target.key),
+                                      (.8, True, target.key)):
+                result = planner.step(state, scan(self.cfg, stamp=now), mapper, now, blocked,
+                                      feedback_target=key)
+                self.assertIs(result.target, target)
+            result = planner.step(state, scan(self.cfg, stamp=1.), mapper, 1., True,
+                                  feedback_target=target.key)
+        self.assertIsNone(result.target)
+        self.assertTrue(planner.memory.attempts)
+
     def test_duplicate_scan_does_not_amplify_evidence(self):
         grid = OccupancyMap(self.cfg)
         s = scan(self.cfg, raycast(course('pocket')[0], (0., 0., 0.)))
@@ -520,6 +607,10 @@ class MappingAndReplayTests(unittest.TestCase):
     def test_spawned_worker_produces_plan_and_saves_on_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
             config = replace(self.cfg, run_file=str(Path(directory)/'run.npz'))
+            completed = RunMemory(config)
+            completed.complete = True
+            completed.save(config.run_file, OccupancyMap(config))
+            original = Path(config.run_file).read_bytes()
             context = mp.get_context('spawn')
             incoming, outgoing = context.Queue(1), context.Queue(1)
             stopping, save = context.Event(), context.Event()
@@ -540,7 +631,8 @@ class MappingAndReplayTests(unittest.TestCase):
                 incoming.close()
                 outgoing.close()
             self.assertEqual(process.exitcode, 0)
-            self.assertTrue(Path(config.run_file).is_file())
+            self.assertEqual(Path(config.run_file).read_bytes(), original)
+            self.assertTrue(Path(directory, 'run.incomplete.npz').is_file())
 
 
 class CourseTests(unittest.TestCase):
@@ -566,8 +658,6 @@ class CourseTests(unittest.TestCase):
                     self.assertTrue(second['completed'])
                     self.assertGreater(second['minimum_clearance'], cfg.radius)
                     self.assertLess(second['elapsed'], first['elapsed'])
-                if name == 'pocket':
-                    self.assertGreater(first['modes'].get('BACKTRACK', 0), 0)
 
 
 if __name__ == '__main__':

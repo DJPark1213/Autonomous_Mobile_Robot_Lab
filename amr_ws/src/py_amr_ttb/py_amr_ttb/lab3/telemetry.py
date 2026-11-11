@@ -6,6 +6,8 @@ retain write errors for reporting.
 """
 
 import csv
+import json
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from queue import Queue, Empty, Full
 from threading import Event, Thread
@@ -60,11 +62,28 @@ class Telemetry:
                 writer.writeheader()
                 while not self.stop.is_set() or not self.queue.empty():
                     try:
-                        writer.writerow(self.queue.get(timeout=.1))
+                        item = self.queue.get(timeout=.1)
+                        if isinstance(item, tuple):
+                            path, snapshot = item
+                            def encode(value):
+                                return asdict(value) if is_dataclass(value) else value.tolist()
+                            path.write_text(json.dumps(snapshot, default=encode), encoding='utf-8')
+                        else:
+                            writer.writerow(item)
                     except Empty:
                         self.stream.flush()
         except Exception as error:
             self.error = str(error)
+
+    def capture(self, reason, snapshot):
+        """Queue the exact rejected inputs alongside this run's CSV."""
+        path = self.path.with_name(self.path.stem+'-'+reason+'.json')
+        try:
+            self.queue.put_nowait((path, snapshot))
+            return path
+        except Full:
+            self.dropped += 1
+            return None
 
     def close(self):
         """Queued final samples should get a chance to reach disk

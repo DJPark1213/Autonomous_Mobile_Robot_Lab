@@ -168,8 +168,6 @@ class Lab3Config:
     target_min_distance: float = 0.15
     target_reserve: float = 0.06
     target_reached: float = 0.18
-    # Require a meaningful score improvement to avoid repeatedly switching sides.
-    switch_margin: float = 0.10
     # Balance progress and usable space against turns and repeated failures.
     weight_goal: float = 0.40
 
@@ -200,13 +198,8 @@ class Lab3Config:
 
     rotate_threshold: float = 1.0
     alignment_tolerance: float = 0.15
-    observation_duration: float = 2.0
-    observation_angle: float = 0.35
-    observation_speed: float = 0.20
-    # Nearby walls can guide motion around corners while preserving separation.
-    wall_trigger: float = 0.40
-    wall_distance: float = 0.35
-    wall_gain: float = 3.0
+    angular_settle_speed: float = 0.15
+    minimum_translation_speed: float = 0.01  # Provisional floor for the slower candidate.
     # Detect unproductive motion and choose a reachable earlier point to recover.
     stall_timeout: float = 3.0
     progress_distance: float = 0.15
@@ -263,7 +256,7 @@ class Lab3Config:
         prove that the configured response model matches hardware.
         """
         signed = {'goal_x', 'goal_y', 'grid_origin_x', 'grid_origin_y', 'free_threshold'}
-        nonnegative = {'switch_margin', 'route_margin', 'command_latency', 'alignment_min_gain',
+        nonnegative = {'route_margin', 'command_latency', 'alignment_min_gain',
                        'alignment_ambiguity_margin'}
         for field in fields(self):
             value = getattr(self, field.name)
@@ -288,12 +281,12 @@ class Lab3Config:
             raise ValueError('Invalid observation thresholds')
         if self.control_period * 2 > self.sensor_timeout:
             raise ValueError('sensor_timeout must span at least two control cycles')
-        if self.target_min_distance >= self.target_distance or self.wall_distance <= self.radius:
-            raise ValueError('Invalid target or wall clearance')
+        if self.target_min_distance >= self.target_distance:
+            raise ValueError('Invalid target distance')
         if self.target_reached + .05 >= self.target_distance:
             raise ValueError('target_distance must exceed target_reached by more than 0.05 m')
-        if self.alignment_tolerance >= self.rotate_threshold or self.observation_speed > self.max_angular:
-            raise ValueError('Invalid alignment or observation limits')
+        if self.alignment_tolerance >= self.rotate_threshold:
+            raise ValueError('Invalid alignment limits')
         if self.revisit_min_age >= self.revisit_window:
             raise ValueError('revisit_min_age must be less than revisit_window')
         if self.prediction_step > self.control_period:
