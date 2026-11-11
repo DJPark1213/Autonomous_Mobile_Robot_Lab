@@ -38,6 +38,18 @@ class GeometryTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_stationary_speed_noise_does_not_block_alignment(self):
+        values = np.full(360, 2.)
+        values[120:123] = np.nan
+        values[238:241] = np.nan
+        result = process_scan(values, -math.pi, math.pi/180, .15, 12., self.cfg,
+                              transform=(-.04, 0., 0.), received=0.)
+        state = RobotState((0., 0., 0.), .0000823, .000935, 0., 0.)
+        controller = MotionController(self.cfg)
+        self.assertTrue(controller.safe(state, result, 0., 0., .08)[0])
+        self.assertTrue(controller.safe(state, result, 0., .09, .08)[0])
+        self.assertFalse(controller.safe(state, result, .2, 0., .08)[0])
+
     def test_rear_unknown_does_not_trap_starting_footprint(self):
         values = np.full(360, np.inf)
         values[:4] = np.nan
