@@ -229,7 +229,8 @@ class Planner:
                 continue
             hit = points[np.argmin(np.linalg.norm(points, axis=1))]
             tangent = normalize_angle(math.atan2(hit[1], hit[0])-side*math.pi/2)
-            for heading in np.radians((0, 10, -10, 20, -20, 30, -30, 40, -40)):
+            for heading in np.radians((0, 10, -10, 20, -20, 30, -30, 40, -40,
+                                       60, -60, 75, -75, 90, -90)):
                 room = observed_travel(scan, heading, c.radius, c.target_distance+.1)
                 travel = min(c.target_distance, room-.02)
                 if travel < .15:
@@ -239,8 +240,13 @@ class Planner:
                     local = (travel*math.cos(heading), travel*math.sin(heading))
                     point = tuple(transform_points([local], pose)[0])
                     target = Target(point, 'FOLLOW_WALL', score=float(score), wall_side=side)
-                    command = MotionController(c).step(state, source_scan, target, now, c.control_period)
-                    if command.v > 0.:
+                    # Targets are stored in map coordinates; controller probes
+                    # use odometry, just as step_plan does during execution.
+                    probe = replace(target, point=tuple(
+                        transform_points([local], state.pose)[0]))
+                    command = MotionController(c).step(
+                        state, source_scan, probe, now, c.control_period)
+                    if not command.blocked and (command.v > 0. or abs(command.w) > 0.):
                         best = target
         return best
 

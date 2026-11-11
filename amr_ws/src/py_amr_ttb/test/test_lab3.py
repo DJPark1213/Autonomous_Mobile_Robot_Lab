@@ -358,6 +358,24 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertEqual(planner.escape_targets, [])
         self.assertGreater(planner.escape_retry_at, .1)
 
+    def test_wall_follow_accepts_alignment_into_left_side_opening(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        planner.wall_side = -1
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        sensor = scan(self.cfg, raycast([((.5, -2.), (.5, 2.))], state.pose))
+        def side_room(sensor, heading, radius, distance):
+            return .24 if heading >= math.radians(75) else .1
+        with patch('py_amr_ttb.lab3.planner.observed_travel', side_effect=side_room):
+            target = planner.follow_wall(sensor, (2., 3., 0.), state, sensor, 0.)
+        self.assertIsNotNone(target)
+        self.assertGreater(target.point[1], 3.)
+        plan = Plan(target, (2., 3., 0.), 0.)
+        result = MotionController(self.cfg).step_plan(state, sensor, plan, 0., .05)
+        self.assertEqual(result.reason, 'ALIGN')
+        self.assertEqual(result.v, 0.)
+        self.assertGreater(result.w, 0.)
+
     def test_tracking_can_steer_above_settle_speed(self):
         controller = MotionController(self.cfg)
         state = RobotState((0., 0., 0.), .1, .3, 0., 0.)
