@@ -17,6 +17,7 @@ from .geometry import (
 )
 from .motion import MotionController
 from .replay import speed_profile
+from .recovery import escape_sequence
 from .types import Target, Plan
 
 
@@ -48,6 +49,8 @@ class Planner:
         self.wall_side = 0
         self.wall_start = None
         self.wall_clear_scan = None
+        self.escape_targets = []
+        self.escape_retry_at = -math.inf
 
     def commit(self, target, state, pose, now):
         if target is not None and (self.target is None or target.key != self.target.key):
@@ -302,6 +305,30 @@ class Planner:
         sustained_block = self.blocked_time >= max(c.decision_period, 2*c.map_period)
         committed = now < self.target_committed_until
         no_progress = not committed and now-self.progress_at >= c.stall_timeout
+        # Finish each escape leg before goal seeking can undo the retreat.
+        if self.escape_targets:
+            if sustained_block or no_progress:
+                self.escape_targets.clear()
+                self.commit(None, state, pose, now)
+                self.escape_retry_at = now+c.stall_timeout
+                self.diagnostics = {'recovery_stage': 'BACKTRACK',
+                                    'recovery_transition': 'ESCAPE_BLOCKED'}
+            elif near:
+                self.escape_targets.pop(0)
+                if self.escape_targets:
+                    self.commit(self.escape_targets[0], state, pose, now)
+                else:
+                    self.commit(None, state, pose, now)
+                    self.wall_start = None
+                    self.wall_side = 0
+                    self.wall_clear_scan = None
+                    self.diagnostics = {'recovery_stage': 'NORMAL',
+                                        'recovery_transition': 'ESCAPE_COMPLETED'}
+            if self.escape_targets:
+                return Plan(self.target, transform, now, revision,
+                            diagnostics={'recovery_stage': self.target.mode,
+                                         'remaining_legs': len(self.escape_targets)})
+
         failed_backtrack = (self.target is not None and self.target.mode == 'BACKTRACK' and not near
                             and (sustained_block or no_progress))
         if self.target and self.target.mode == 'BACKTRACK' and not near and not failed_backtrack:
@@ -361,9 +388,12 @@ class Planner:
                 if target is not None and not self.wall_side:
                     self.wall_side = target.wall_side
                 self.commit(target, state, pose, now)
-                return Plan(target, transform, now, revision,
-                            'RUNNING' if target else 'WALL_FOLLOW_BLOCKED',
-                            diagnostics={'wall_side': self.wall_side})
+                if target is not None:
+                    return Plan(target, transform, now, revision,
+                                diagnostics={'wall_side': self.wall_side})
+                # Exhausted forward candidates must reach shared recovery below.
+                sustained_block = True
+                near = True
 
         # If the goal is nearby and its whole approach is observed, aim there directly.
         if distance <= c.target_distance and not sustained_block and not no_progress:
@@ -411,7 +441,7 @@ class Planner:
             if failed_backtrack:
                 self.target = None
                 self.recovery_stalled = True
-            previous = None if grid is None or self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
+            previous = None if self.recovery_stalled else self.memory.return_target(pose[:2], segment_clear)
 
             if previous is not None:
                 angle = normalize_angle(
@@ -424,6 +454,16 @@ class Planner:
                 self.memory.fail(previous, goal_angle, now)
                 self.recent.clear()
                 return Plan(self.target, transform, now, revision)
+
+        if stalled and not self.recovery_stalled and now >= self.escape_retry_at:
+            self.escape_retry_at = now+c.decision_period
+            self.escape_targets = escape_sequence(state, scan, c, now, transform)
+            if self.escape_targets:
+                self.commit(self.escape_targets[0], state, pose, now)
+                return Plan(self.target, transform, now, revision,
+                            diagnostics={'recovery_stage': 'RECOVERY_REVERSE',
+                                         'remaining_legs': len(self.escape_targets)})
+            self.diagnostics['recovery_stage'] = 'WAIT_FOR_EVIDENCE'
 
         # Keep a useful target between decision times to avoid constant steering changes.
         # Arrival, blockage or stalled progress allows an earlier decision.
@@ -547,6 +587,14 @@ class Planner:
                     self.commit(max(approaches, key=lambda target: target.score), state, pose, now)
                     return Plan(self.target, transform, now, revision,
                                 diagnostics=dict(self.diagnostics))
+            if previous is None and not self.recovery_stalled and now >= self.escape_retry_at:
+                self.escape_retry_at = now+c.decision_period
+                self.escape_targets = escape_sequence(state, scan, c, now, transform)
+                if self.escape_targets:
+                    self.commit(self.escape_targets[0], state, pose, now)
+                    return Plan(self.target, transform, now, revision,
+                                diagnostics={'recovery_stage': 'RECOVERY_REVERSE',
+                                             'remaining_legs': len(self.escape_targets)})
             angle = (
                 normalize_angle(math.atan2(previous[1]-pose[1], previous[0]-pose[0])-pose[2])
                 if previous else 0.

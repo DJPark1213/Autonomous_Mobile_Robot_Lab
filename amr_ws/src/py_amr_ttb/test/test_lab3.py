@@ -260,12 +260,145 @@ class StateAndMotionTests(unittest.TestCase):
         result = controller.step(stopped, scan(self.cfg, stamp=.1), Target((2., 0.)), .1, .05)
         self.assertGreater(result.v, 0.)
 
+    def test_blocked_straight_motion_searches_both_steering_directions(self):
+        controller = MotionController(self.cfg)
+        state = RobotState((0., 0., 0.), .1, 0., 0., 0.)
+        def clearance(state, sensor, v, w, now, diagnostics):
+            clear = w > 0.
+            diagnostics.update(hit_rejections=int(not clear), coverage_rejections=0)
+            return clear, rollout(state, v, w, self.cfg)
+        with patch.object(controller, 'safe', side_effect=clearance):
+            result = controller.step(state, scan(self.cfg), Target((2., 0.)), 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertGreater(result.w, 0.)
+        self.assertEqual(result.reason, 'CLEARANCE')
+        attempts = result.diagnostics['attempted_commands']
+        self.assertTrue(any(attempt['w'] < 0 for attempt in attempts))
+        self.assertLessEqual(len(attempts), 12)
+
+    def test_corner_allows_arc_when_straight_candidates_fail(self):
+        state = RobotState((0., 0., 0.), .15, 0., 0., 0.)
+        sensor = scan(self.cfg, raycast([((.20, .15), (.20, 1.))], state.pose))
+        controller = MotionController(self.cfg)
+        result = controller.step(state, sensor, Target((2., 0.)), 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertLess(result.w, 0.)
+        straight = [attempt for attempt in result.diagnostics['attempted_commands']
+                    if attempt['w'] == 0.]
+        self.assertTrue(straight)
+        self.assertTrue(all(not attempt['clear'] for attempt in straight))
+        self.assertTrue(controller.safe(state, sensor, result.v, result.w, 0.)[0])
+
+    def test_alternative_commands_respect_acceleration_and_braking(self):
+        from py_amr_ttb.lab3.trajectory import command_candidates
+        for speed in (.0, .15, -.05):
+            state = RobotState((0., 0., 0.), speed, .2, 0., 0.)
+            desired = -.08 if speed < 0 else .3
+            v = approach(speed, desired, self.cfg.linear_acceleration,
+                         self.cfg.linear_braking, .05)
+            w = approach(.2, 0., self.cfg.angular_acceleration,
+                         self.cfg.angular_braking, .05)
+            candidates = list(command_candidates(state, v, w, self.cfg, .05))
+            self.assertLessEqual(len(candidates), 12)
+            for candidate_v, candidate_w in candidates:
+                self.assertAlmostEqual(candidate_v, approach(
+                    speed, candidate_v, self.cfg.linear_acceleration, self.cfg.linear_braking, .05))
+                self.assertAlmostEqual(candidate_w, approach(
+                    .2, candidate_w, self.cfg.angular_acceleration, self.cfg.angular_braking, .05))
+
+    def test_clear_cruise_keeps_speed_and_checks_one_candidate(self):
+        state = RobotState((0., 0., 0.), self.cfg.max_linear, 0., 0., 0.)
+        result = MotionController(self.cfg).step(
+            state, scan(self.cfg), Target((2., 0.)), 0., .05)
+        self.assertEqual(result.v, self.cfg.max_linear)
+        self.assertEqual(result.w, 0.)
+        self.assertEqual(len(result.diagnostics['attempted_commands']), 1)
+
+    def test_escape_sequence_requires_observed_rear_and_uses_map_frame(self):
+        from py_amr_ttb.lab3.recovery import escape_sequence
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        targets = escape_sequence(state, scan(self.cfg), self.cfg, 0., (2., 3., 0.))
+        self.assertEqual(len(targets), 2)
+        self.assertTrue(targets[0].reverse)
+        self.assertAlmostEqual(targets[0].point[0], 1.9)
+        self.assertAlmostEqual(targets[0].point[1], 3.)
+        values = np.full(360, np.inf)
+        values[:6] = values[354:] = np.nan
+        self.assertEqual(escape_sequence(
+            state, scan(self.cfg, values), self.cfg, 0., (0., 0., 0.)), [])
+
+    def test_escape_commits_retreat_then_advance_and_exits(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        planner.step(state, scan(self.cfg), None, 0.)
+        retreat = Target((-.1, 0.), 'RECOVERY_REVERSE', reverse=True)
+        advance = Target((-.1, .25), 'RECOVERY_ADVANCE')
+        planner.escape_targets = [retreat, advance]
+        planner.commit(retreat, state, state.pose, 0.)
+        plan = planner.step(state, scan(self.cfg, stamp=.1), None, .1)
+        self.assertIs(plan.target, retreat)
+        arrived = replace(state, pose=(-.1, 0., 0.), received=.2)
+        plan = planner.step(arrived, scan(self.cfg, pose=arrived.pose, stamp=.2), None, .2)
+        self.assertIs(plan.target, advance)
+        arrived = replace(state, pose=(-.1, .25, 0.), received=.3)
+        planner.step(arrived, scan(self.cfg, pose=arrived.pose, stamp=.3), None, .3)
+        self.assertEqual(planner.escape_targets, [])
+
+    def test_blocked_escape_releases_commitment_and_defers_retry(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        planner.step(state, scan(self.cfg), None, 0.)
+        retreat = Target((-.1, 0.), 'RECOVERY_REVERSE', reverse=True)
+        planner.escape_targets = [retreat, Target((-.1, .25), 'RECOVERY_ADVANCE')]
+        planner.commit(retreat, state, state.pose, 0.)
+        planner.blocked_time = 1.
+        planner.step(state, scan(self.cfg, stamp=.1), None, .1, True, 'TRANSLATION_OBSTACLE')
+        self.assertEqual(planner.escape_targets, [])
+        self.assertGreater(planner.escape_retry_at, .1)
+
     def test_tracking_can_steer_above_settle_speed(self):
         controller = MotionController(self.cfg)
         state = RobotState((0., 0., 0.), .1, .3, 0., 0.)
         result = controller.step(state, scan(self.cfg), Target((2., 1.)), 0., .05)
         self.assertGreater(result.v, 0.)
         self.assertGreater(result.w, self.cfg.angular_settle_speed)
+
+    def test_nearly_expired_history_does_not_shorten_publish_window(self):
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        current = scan(self.cfg, stamp=1.)
+        current = replace(current, coverage=prepare_coverage(
+            (current, scan(self.cfg, stamp=.601))))
+        state = RobotState((0., 0., 0.), 0., 0., 1., 1.)
+        plan = Plan(Target((2., 0.)), (0., 0., 0.), 1.)
+        result = MotionController(self.cfg).step_plan(state, current, plan, 1., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertAlmostEqual(result.diagnostics['valid_until'], 1.4)
+
+    def test_passed_recovery_target_brakes_without_turning_back(self):
+        state = RobotState((0., 0., 0.), .3, 0., 1., 1.)
+        result = MotionController(self.cfg).step(
+            state, scan(self.cfg, stamp=1.),
+            Target((-.002, .001), 'FORWARD_CORRECTION'), 1., .05)
+        self.assertEqual(result.reason, 'TARGET_REACHED')
+        self.assertAlmostEqual(result.v, .275)
+        self.assertEqual(result.w, 0.)
+
+    def test_failed_wall_follow_reaches_verified_backtrack(self):
+        from py_amr_ttb.lab3.planner import Planner
+        memory = RunMemory(self.cfg)
+        planner = Planner(self.cfg, memory)
+        planner.wall_start = (0., 0.)
+        state = RobotState((0., 0., 0.), 0., 0., 1., 1.)
+        with patch.object(planner, 'observed_segment', return_value=False), \
+                patch.object(planner, 'opening_approach', return_value=None), \
+                patch.object(planner, 'follow_wall', return_value=None), \
+                patch.object(memory, 'return_target', return_value=(-.4, 0.)) as retreat:
+            plan = planner.step(state, scan(self.cfg, stamp=1.), None, 1.)
+        retreat.assert_called_once()
+        self.assertEqual(plan.target.mode, 'BACKTRACK')
+        self.assertTrue(plan.target.reverse)
 
     def test_publish_deadline_includes_older_coverage_and_plan(self):
         from py_amr_ttb.lab3.coverage import prepare_coverage
