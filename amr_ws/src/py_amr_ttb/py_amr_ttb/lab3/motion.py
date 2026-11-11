@@ -200,9 +200,13 @@ class MotionController:
 
         # 4. Larger heading errors request faster turning, up to the angular limit.
         desired_w = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
+        forward_recovery = target.mode in ('FOLLOW_WALL', 'FORWARD_CORRECTION')
+        steer_while_moving = forward_recovery and not target.reverse and abs(heading) <= math.pi/4
         was_aligning = self.aligning
-        self.aligning = abs(heading) >= (c.alignment_tolerance if was_aligning else c.rotate_threshold)
-        self.settling = not self.aligning and (was_aligning or self.settling)
+        self.aligning = not steer_while_moving and abs(heading) >= (
+            c.alignment_tolerance if was_aligning else c.rotate_threshold)
+        self.settling = not steer_while_moving and not self.aligning and (
+            was_aligning or self.settling)
         details = dict(heading_error=heading, target_distance=distance,
                        translation_rejection=None)
         # 5. Collect linear-speed limits with their reasons, then use the lowest.
@@ -267,7 +271,7 @@ class MotionController:
         details['attempted_commands'] = attempts
         slower = math.copysign(max(c.minimum_translation_speed, abs(v)/2), v)
         candidates = (v, slower) if abs(slower) < abs(v) else (v,)
-        if target.mode == 'FOLLOW_WALL' and v > 0.:
+        if forward_recovery and v > 0.:
             candidates = (v, .8*v, .6*v, .4*v, .2*v)
         for candidate in candidates:
             checks = {}

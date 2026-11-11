@@ -157,6 +157,36 @@ class Planner:
         self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
+    def opening_approach(self, state, scan, local_scan, pose, now, reference):
+        """Aim between nearby opposing returns and check the initial driving arc."""
+        c = self.cfg
+        points = local_scan.points
+        for distance in (.45, .65, .85):
+            band = points[abs(points[:, 0]-distance) <= .10, 1]
+            left = band[band > 0.]
+            right = band[band < 0.]
+            if not len(left) or not len(right):
+                continue
+            left, right = left.min(), right.max()
+            width = left-right
+            if not 2*c.radius <= width <= 2*c.radius+.35:
+                continue
+            center = (left+right)/2
+            heading = math.atan2(center, distance)
+            if abs(heading) > math.pi/4 or abs(heading-reference) < math.radians(4):
+                continue
+            room = observed_travel(local_scan, heading, c.radius, distance+.15, step=.025)
+            travel = min(math.hypot(distance, center), room-.02)
+            if travel < .25:
+                continue
+            point = transform_points([(travel*math.cos(heading), travel*math.sin(heading))], pose)[0]
+            target = Target(tuple(point), 'FORWARD_CORRECTION')
+            command = MotionController(c).step(state, scan, target, now, c.control_period)
+            if command.v > 0.:
+                return target, dict(opening_width=float(width), opening_heading=heading,
+                                    arc_v=command.v, arc_w=command.w)
+        return None
+
     def forward_correction(self, state, scan, local_scan, pose, now):
         """Try the smallest forward heading change with room to steer and stop."""
         c = self.cfg
@@ -166,15 +196,15 @@ class Planner:
             room = observed_travel(local_scan, heading, c.radius, .40, step=.025)
             if room < .25:
                 continue
-            turn = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
-            if not controller.safe(state, scan, 0., turn, now)[0]:
-                continue
             travel = min(.35, room)
             local = (travel*math.cos(heading), travel*math.sin(heading))
-            return Target(tuple(transform_points([local], pose)[0]), 'FORWARD_CORRECTION')
+            target = Target(tuple(transform_points([local], pose)[0]), 'FORWARD_CORRECTION')
+            command = controller.step(state, scan, target, now, c.control_period)
+            if command.v > 0.:
+                return target
         return None
 
-    def follow_wall(self, scan, pose):
+    def follow_wall(self, scan, pose, state, source_scan, now):
         """Select a forward segment alongside the nearest hit on the chosen side."""
         c = self.cfg
         best = None
@@ -194,7 +224,10 @@ class Planner:
                 if best is None or score > best.score:
                     local = (travel*math.cos(heading), travel*math.sin(heading))
                     point = tuple(transform_points([local], pose)[0])
-                    best = Target(point, 'FOLLOW_WALL', score=float(score), wall_side=side)
+                    target = Target(point, 'FOLLOW_WALL', score=float(score), wall_side=side)
+                    command = MotionController(c).step(state, source_scan, target, now, c.control_period)
+                    if command.v > 0.:
+                        best = target
         return best
 
     def step(self, state, scan, mapper, now, blocked=False, motion_reason='', feedback_target=None):
@@ -266,18 +299,24 @@ class Planner:
         if grid is None and self.route is None and self.wall_start is None and self.target:
             correcting = self.target.mode == 'FORWARD_CORRECTION'
             if correcting and not near and not sustained_block and not no_progress:
-                return Plan(self.target, transform, now, revision)
+                return Plan(self.target, transform, now, revision, diagnostics=self.diagnostics)
             if not correcting and not near:
                 dx, dy = self.target.point[0]-pose[0], self.target.point[1]-pose[1]
                 heading = normalize_angle(math.atan2(dy, dx)-pose[2])
+                opening = self.opening_approach(state, scan, local_scan, pose, now, heading)
+                if opening is not None:
+                    target, diagnostics = opening
+                    self.commit(target, state, pose, now)
+                    self.diagnostics = diagnostics
+                    return Plan(target, transform, now, revision, diagnostics=diagnostics)
                 threatened = (abs(heading) <= math.radians(15)
                               and observed_travel(local_scan, heading, c.radius, .30) < .20)
                 if threatened or sustained_block or no_progress:
                     correction = self.forward_correction(state, scan, local_scan, pose, now)
                     if correction is not None:
                         self.commit(correction, state, pose, now)
-                        return Plan(correction, transform, now, revision,
-                                    diagnostics={'recovery': 'FORWARD_CORRECTION'})
+                        self.diagnostics = {'recovery': 'FORWARD_CORRECTION'}
+                        return Plan(correction, transform, now, revision, diagnostics=self.diagnostics)
 
         if grid is None and (self.wall_start is not None or sustained_block or no_progress):
             if self.wall_start is None:
@@ -297,11 +336,17 @@ class Planner:
                 sustained_block = no_progress = False
                 near = True
             else:
-                if (self.target is not None and self.target.mode == 'FOLLOW_WALL'
+                if (self.target is not None and self.target.mode in ('FOLLOW_WALL', 'FORWARD_CORRECTION')
                         and not near and not sustained_block and not no_progress):
                     target = self.target
                 else:
-                    target = self.follow_wall(local_scan, pose)
+                    opening = self.opening_approach(state, scan, local_scan, pose, now, 0.)
+                    if opening is not None:
+                        target, diagnostics = opening
+                        self.commit(target, state, pose, now)
+                        self.diagnostics = diagnostics
+                        return Plan(target, transform, now, revision, diagnostics=diagnostics)
+                    target = self.follow_wall(local_scan, pose, state, scan, now)
                 if target is not None and not self.wall_side:
                     self.wall_side = target.wall_side
                 self.commit(target, state, pose, now)
