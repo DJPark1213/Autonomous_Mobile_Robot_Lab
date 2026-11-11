@@ -189,6 +189,11 @@ Live coverage preparation runs in one background thread using NumPy.
 There is at most one preparation job. Incoming scans continue to update while it
 runs, and the next job takes the newest observations. Each scan gets prepared
 angular validity counts and minimum-range tables. Expiry selects eligible tables.
+Live preparation can bridge invalid runs when valid beams bracket a gap of at
+most 4 degrees. Inferred clearance ends at the shorter bracketing range or
+0.50 m from the lidar, whichever is closer, with a chord bound across the gap.
+This is a near-field inference. Raw validity and obstacle hits remain available
+for mapping and collision checks. Wider gaps still require supporting scans.
 The control callback uses fast circle-coverage queries and batched conservative
 subdivision only where several scans must jointly cover a footprint.
 It also checks current obstacle hits against each

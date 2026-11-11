@@ -4,6 +4,9 @@ import math
 import numpy as np
 from .geometry import transform_points, MAX_OBSERVED_GAP, FULL_TURN
 
+MAX_NEAR_FIELD_GAP = math.radians(4.)
+MAX_NEAR_FIELD_RANGE = .50
+
 
 @dataclass
 class AngularCoverage:
@@ -51,7 +54,7 @@ class PreparedCoverage:
         return eligible
 
 
-def prepare_coverage(scans):
+def prepare_coverage(scans, *, bridge_small_gaps=False):
     sources, receipts = [], []
     for scan in sorted(scans, key=lambda item: item.received, reverse=True):
         angles = (scan.angles+scan.pose[2]+math.pi) % FULL_TURN-math.pi
@@ -61,6 +64,21 @@ def prepare_coverage(scans):
         widths = (np.roll(angles, -1)-angles) % FULL_TURN
         valid = known & np.roll(known, -1) & (widths <= MAX_OBSERVED_GAP)
         bound = np.minimum(ranges, np.roll(ranges, -1))*np.cos(widths/2)
+        if bridge_small_gaps:
+            # Infer only short, bracketed near-field intervals. Limit each
+            # interval by the shorter valid beam and the chord across the gap.
+            indices = np.flatnonzero(known)
+            if len(indices) >= 2:
+                next_indices = np.roll(indices, -1)
+                steps = (next_indices-indices) % len(angles)
+                spans = (angles[next_indices]-angles[indices]) % FULL_TURN
+                gaps = (steps > 1) & (spans > 0.) & (spans <= MAX_NEAR_FIELD_GAP)
+                for left, right, count, span in zip(indices[gaps], next_indices[gaps],
+                                                     steps[gaps], spans[gaps]):
+                    sectors = (left+np.arange(count)) % len(angles)
+                    valid[sectors] = True
+                    limit = min(MAX_NEAR_FIELD_RANGE, ranges[left], ranges[right])
+                    bound[sectors] = limit*math.cos(span/2)
         values = np.tile(bound, 2)
         tables = [values]
         width = 1

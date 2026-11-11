@@ -235,7 +235,8 @@ class Lab3Node(Node):
             if observations:
                 self.coverage_sequence = scan.sequence
                 self.coverage_job_epoch = self.coverage_epoch
-                self.coverage_future = self.coverage_pool.submit(prepare_coverage, observations)
+                self.coverage_future = self.coverage_pool.submit(
+                    prepare_coverage, observations, bridge_small_gaps=True)
         if scan is not None:
             scan = replace(scan, coverage=self.prepared_coverage, coverage_time=now,
                            coverage_timeout=self.cfg.sensor_timeout, history=tuple(

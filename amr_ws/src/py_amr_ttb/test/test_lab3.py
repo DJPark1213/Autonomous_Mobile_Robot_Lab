@@ -437,6 +437,33 @@ class PreparedCoverageTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_small_bracketed_gap_only_supports_near_field(self):
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        ranges = np.full(360, 3.)
+        ranges[179:181] = np.nan
+        sensor = scan(self.cfg, ranges)
+        centers = [[.35, 0.], [.6, 0.]]
+        strict = replace(sensor, coverage=prepare_coverage((sensor,)))
+        tolerant = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+        np.testing.assert_array_equal(circles_observed(strict, centers, .005), [False, False])
+        np.testing.assert_array_equal(circles_observed(tolerant, centers, .005), [True, False])
+        self.assertEqual(np.count_nonzero(~sensor.known), 2)
+
+    def test_gap_inference_respects_short_returns_and_large_gaps(self):
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        ranges = np.full(360, 3.)
+        ranges[178] = .25
+        ranges[179:181] = np.nan
+        sensor = scan(self.cfg, ranges)
+        tolerant = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+        self.assertFalse(circles_observed(tolerant, [[.35, 0.]], .005)[0])
+        np.testing.assert_array_equal(tolerant.coverage.sources[0].hits, sensor.points)
+
+        ranges[175:186] = np.nan
+        sensor = scan(self.cfg, ranges)
+        tolerant = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+        self.assertFalse(circles_observed(tolerant, [[.35, 0.]], .005)[0])
+
     def test_prepared_circle_bounds_are_conservative(self):
         from py_amr_ttb.lab3.coverage import prepare_coverage
         rng = np.random.default_rng(12)
