@@ -30,7 +30,7 @@ setup(
             glob('launch/*.launch.py'),
         ),
     ],
-    install_requires=['setuptools', 'numpy', 'shapely>=1.8'],
+    install_requires=['setuptools', 'numpy'],
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='BrodyBrody41@gmail.com',

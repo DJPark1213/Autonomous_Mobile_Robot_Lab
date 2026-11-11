@@ -389,6 +389,19 @@ class PreparedCoverageTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_prepared_circle_bounds_are_conservative(self):
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        rng = np.random.default_rng(12)
+        values = rng.uniform(.3, 3., 360)
+        values[::19] = np.nan
+        sensor = scan(self.cfg, values, pose=(2., -1., 2.9))
+        points = rng.uniform(-1., 1., (400, 2))
+        radii = rng.uniform(.001, .25, 400)
+        source = prepare_coverage((sensor,)).sources[0]
+        fast = source.covers(transform_points(points, sensor.pose), radii)
+        original = circles_observed(sensor, points, radii)
+        self.assertFalse(np.any(fast & ~original))
+
     def prepared(self, current, previous=(), now=0.):
         from py_amr_ttb.lab3.coverage import prepare_coverage
         return replace(current, coverage=prepare_coverage((current, *previous)),
