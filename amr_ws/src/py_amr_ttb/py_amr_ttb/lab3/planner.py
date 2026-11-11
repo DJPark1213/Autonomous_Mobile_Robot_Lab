@@ -185,12 +185,12 @@ class Planner:
                 continue
             hit = points[np.argmin(np.linalg.norm(points, axis=1))]
             tangent = normalize_angle(math.atan2(hit[1], hit[0])-side*math.pi/2)
-            for heading in np.linspace(-1.15, 1.15, 13):
+            for heading in np.radians((0, 10, -10, 20, -20, 30, -30, 40, -40)):
                 room = observed_travel(scan, heading, c.radius, c.target_distance+.1)
                 travel = min(c.target_distance, room-.02)
-                if travel <= c.target_reached:
+                if travel < .15:
                     continue
-                score = travel-.35*abs(normalize_angle(heading-tangent))-.15*abs(heading)
+                score = min(travel, .35)-.20*abs(normalize_angle(heading-tangent))-.45*abs(heading)
                 if best is None or score > best.score:
                     local = (travel*math.cos(heading), travel*math.sin(heading))
                     point = tuple(transform_points([local], pose)[0])
