@@ -478,8 +478,9 @@ class StateAndMotionTests(unittest.TestCase):
                 break
         self.assertEqual(plan.status, 'DONE')
 
-    def test_high_speed_default_reaches_hardware_cap_in_open_space(self):
-        config = Lab3Config()
+    def test_explicit_high_speed_reaches_hardware_cap_in_open_space(self):
+        self.assertEqual(Lab3Config().max_linear, .30)
+        config = Lab3Config(max_linear=.46)
         self.assertEqual(config.max_linear, .46)
         state = RobotState((0., 0., 0.), .46, 0., 0., 0.)
         result = MotionController(config).step(

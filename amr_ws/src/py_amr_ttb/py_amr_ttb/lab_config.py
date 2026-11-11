@@ -129,7 +129,7 @@ class Lab3Config:
 
     # ==================== TUNE 1/5: DRIVING SPEED ====================
     # Forward speed cap (m/s); raise gradually after braking checks.
-    max_linear: float = 0.46
+    max_linear: float = 0.30
     # ===============================================================
 
     max_angular: float = 1.4
