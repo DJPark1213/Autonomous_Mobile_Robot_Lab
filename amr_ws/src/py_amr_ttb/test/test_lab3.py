@@ -450,13 +450,30 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertFalse(result.blocked)
         self.assertTrue(controller.safe(state, sensor, result.v, result.w, 0.)[0])
 
-    def test_passage_corrects_small_heading_error_while_moving(self):
+    def test_passage_brakes_for_small_heading_error_before_entry(self):
         state = RobotState((0., 0., 0.), .06, 0., 0., 0.)
         target = Target((.5, .03), 'PASSAGE')
         result = MotionController(self.cfg).step(state, scan(self.cfg), target, 0., .05)
-        self.assertGreater(result.v, state.v)
-        self.assertGreater(result.w, 0.)
+        self.assertLess(result.v, state.v)
+        self.assertEqual(result.w, 0.)
+        self.assertEqual(result.reason, 'BRAKE_FOR_TURN')
         self.assertFalse(result.blocked)
+
+    def test_passage_target_keeps_crawl_contract_when_remaining_segment_opens(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        state = RobotState((0., 0., 0.), .1, 0., 0., 0.)
+        old = Target((.3, 0.), 'PASSAGE')
+        planner.target = old
+        sensor = scan(self.cfg)
+        # Isolate the retained waypoint from newly discovered alternatives.
+        with patch.object(planner, 'evaluate', return_value=None):
+            target = planner.select_local_target(state, sensor, sensor, state.pose, 0.,
+                                                  hold_passage=True)
+        self.assertEqual(target.key, old.key)
+        self.assertEqual(target.arrival_distance(self.cfg.target_reached), .025)
+        result = MotionController(self.cfg).step(state, sensor, target, 0., .05)
+        self.assertLessEqual(result.v, .1)
 
     def test_refined_opening_search_finds_off_grid_corridor(self):
         from py_amr_ttb.lab3.planner import Planner

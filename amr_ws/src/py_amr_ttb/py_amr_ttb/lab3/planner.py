@@ -306,11 +306,14 @@ class Planner:
             cruise = c.max_linear
             passage_speed = min(.10, cruise/3)
             narrow_fraction = float(np.mean(narrow))
-            if narrow.any():
+            # Preserve the maneuver contract of an existing passage waypoint.
+            # A later scan clearing its remaining segment does not authorize
+            # cruise speed or the larger FIRST_RUN arrival radius mid-maneuver.
+            # A different, verified open-space candidate may still replace it.
+            if narrow.any() or target.mode == 'PASSAGE':
                 target = replace(target, mode='PASSAGE')
                 cruise = passage_speed
-            elif target.mode == 'PASSAGE':
-                target = replace(target, mode='FIRST_RUN')
+                narrow_fraction = 1.
             travel_time = distance*((1-narrow_fraction)/c.max_linear
                                     + narrow_fraction/passage_speed)
             turn_time = abs(heading)/c.max_angular

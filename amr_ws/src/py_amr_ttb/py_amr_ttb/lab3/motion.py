@@ -138,10 +138,10 @@ class MotionController:
         passage = target.mode == 'PASSAGE'
         steer_while_moving = not passage and not self.aligning and abs(heading) < 1.4
         was_aligning = self.aligning
-        # Require precise alignment before leaving a stationary turn, but
-        # let slow curved tracking correct small errors during the passage.
+        # Restore precise passage alignment: even a small heading error can
+        # carry the body into the side of a narrow entrance before it corrects.
         if passage:
-            alignment_limit = min(c.alignment_tolerance, .01 if was_aligning else .12)
+            alignment_limit = min(c.alignment_tolerance, .01)
         else:
             alignment_limit = c.alignment_tolerance if was_aligning else 1.4
         self.aligning = not steer_while_moving and abs(heading) >= alignment_limit
