@@ -10,10 +10,10 @@ from dataclasses import replace
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
-from .geometry import inverse_points, scan_at_pose, free_distances
+from .geometry import inverse_points, scan_at_pose
 from .types import MotionResult
 # Keep these imports available to existing callers of motion.approach/rollout.
-from .trajectory import approach, rollout, evaluate_trajectory, command_candidates
+from .trajectory import approach, rollout, evaluate_trajectory, command_candidates, arc_obstacle_distance
 
 
 class MotionController:
@@ -135,11 +135,12 @@ class MotionController:
 
         # Larger heading errors request faster turning, up to the angular limit.
         desired_w = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
-        forward_recovery = target.mode in ('FOLLOW_WALL', 'FORWARD_CORRECTION', 'RECOVERY_ADVANCE')
-        steer_while_moving = forward_recovery and not target.reverse and abs(heading) <= math.pi/4
+        passage = target.mode == 'PASSAGE'
+        steer_while_moving = not passage and not self.aligning and abs(heading) < 1.4
         was_aligning = self.aligning
+        alignment_limit = min(c.alignment_tolerance, .01) if passage else c.alignment_tolerance
         self.aligning = not steer_while_moving and abs(heading) >= (
-            c.alignment_tolerance if was_aligning else c.rotate_threshold)
+            alignment_limit if was_aligning or passage else 1.4)
         self.settling = not steer_while_moving and not self.aligning and (
             was_aligning or self.settling)
         details = dict(heading_error=heading, target_distance=distance,
@@ -147,6 +148,15 @@ class MotionController:
         # Collect linear-speed limits with their reasons, then use the lowest.
         # A replay bend may lower the ordinary cruise-speed ceiling.
         top = min(c.max_linear, c.max_linear if speed_cap is None else speed_cap)
+        if passage:
+            top = min(top, .10, c.max_linear/3)
+        curvature = 2*math.sin(heading)/max(distance, c.target_min_distance)
+        if target.reverse:
+            curvature = -curvature
+        if not self.aligning:
+            top = min(top, math.sqrt(c.lateral_acceleration/max(abs(curvature), 1e-6)),
+                      c.max_angular/max(abs(curvature), 1e-6))
+            desired_w = curvature*(-top if target.reverse else top)
         reasons = [(top, 'SPEED_LIMIT' if top == c.max_linear else 'ROUTE_BEND')]
 
         # Reduce forward motion while pointing away from the desired direction.
@@ -158,21 +168,21 @@ class MotionController:
             reasons.append((c.lateral_acceleration/abs(desired_w), 'TURN'))
 
         # Final goals and short approaches cap speed by the remaining stopping distance.
-        if target.mode in ('FINAL', 'APPROACH', 'RECOVERY_REVERSE', 'RECOVERY_ADVANCE'):
+        if target.mode in ('FINAL', 'APPROACH', 'RECOVERY_REVERSE', 'RECOVERY_ADVANCE', 'PASSAGE'):
             reasons.append((
                 math.sqrt(2*c.linear_braking*max(0., distance-target.arrival_distance(c.goal_tolerance))),
                 'ARRIVAL',
             ))
 
-        # Anticipate an obstacle during near-straight travel. Reserve maneuvering
+        # Anticipate obstacles along the tracking arc. Reserve maneuvering
         # room plus the command horizon, latency and braking distance.
-        if not self.aligning and abs(desired_w) <= .15:
+        if not self.aligning:
             local_scan = scan_at_pose(scan, state.pose)
-            direction = math.pi if target.reverse else 0.
+            direction = -1. if target.reverse else 1.
             delay = c.command_latency+max(0., now-scan.received)+c.prediction_horizon
             lookahead = top*delay+top*top/(2*c.linear_braking)+c.target_reserve
-            room = float(free_distances(
-                local_scan.points, [direction], c.radius, lookahead)[0])
+            room = arc_obstacle_distance(
+                local_scan.points, curvature, direction, c.radius, lookahead)
             available = max(0., room-c.target_reserve)
             braking_delay = c.linear_braking*delay
             clearance_speed = math.sqrt(braking_delay**2+2*c.linear_braking*available)-braking_delay
@@ -186,6 +196,12 @@ class MotionController:
         if target.reverse:
             desired = -min(desired, c.reverse_speed)
             reason = 'REVERSE'
+
+        if not self.aligning:
+            desired_w = curvature*desired
+        if passage and abs(state.v) > top+.005:
+            desired_w = 0.
+            reason = 'BRAKE_FOR_PASSAGE'
 
         if self.aligning:
             desired, reason = 0., 'ALIGN'

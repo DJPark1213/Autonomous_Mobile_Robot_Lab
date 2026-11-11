@@ -21,6 +21,8 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
+from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
+from rcl_interfaces.srv import SetParameters, GetParameters
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from py_amr_ttb.lab_config import Lab3Config
@@ -72,6 +74,7 @@ class Lab3Node(Node):
         values = {field.name: self.declare_parameter(field.name, getattr(defaults, field.name)).value
                   for field in fields(defaults)}
         self.cfg = Lab3Config(**values)
+        self.configure_base()
         self.tracker = StateTracker(self.cfg)
         self.controller = MotionController(self.cfg)
         self.scan = self.plan = None
@@ -108,6 +111,50 @@ class Lab3Node(Node):
                                                 ('save', self.save_run))]
         self.timer = self.create_timer(self.cfg.control_period, self.tick)
         self.get_logger().info(f'Lab 3 {self.cfg.run_mode}; telemetry: {self.telemetry.path}')
+
+    def configure_base(self):
+        """Set the requested base mode and verify its speed before starting control."""
+        mode = self.declare_parameter('safety_override', 'full').value
+        if mode not in ('none', 'backup_only', 'full'):
+            raise ValueError('safety_override must be none, backup_only, or full')
+        if mode != 'full' and self.cfg.max_linear > .306:
+            raise ValueError('Speeds above 0.306 m/s require safety_override=full')
+        setter = self.create_client(SetParameters, self.cfg.topic('motion_control/set_parameters'))
+        getter = self.create_client(GetParameters, self.cfg.topic('motion_control/get_parameters'))
+        try:
+            if not setter.wait_for_service(timeout_sec=10.) or not getter.wait_for_service(timeout_sec=10.):
+                raise RuntimeError('Create 3 motion_control parameter services are unavailable')
+            request = SetParameters.Request(parameters=[
+                Parameter(name='safety_override', value=ParameterValue(
+                    type=ParameterType.PARAMETER_STRING, string_value=mode))])
+            future = setter.call_async(request)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=10.)
+            if not future.done():
+                raise RuntimeError('Timed out configuring Create 3 safety_override')
+            response = future.result()
+            if response is None or len(response.results) != 1 or not response.results[0].successful:
+                reason = response.results[0].reason if response and response.results else 'empty response'
+                raise RuntimeError('Create 3 rejected safety_override: '+reason)
+            future = getter.call_async(GetParameters.Request(names=['max_speed']))
+            rclpy.spin_until_future_complete(self, future, timeout_sec=10.)
+            if not future.done():
+                raise RuntimeError('Timed out reading Create 3 max_speed')
+            response = future.result()
+            if (response is None or len(response.values) != 1
+                    or response.values[0].type != ParameterType.PARAMETER_DOUBLE):
+                raise RuntimeError('Create 3 returned an invalid max_speed')
+            maximum = response.values[0].double_value
+            if not math.isfinite(maximum) or maximum+1e-6 < self.cfg.max_linear:
+                raise RuntimeError(
+                    f'Create 3 max_speed {maximum} is below requested {self.cfg.max_linear}')
+            self.get_logger().info(
+                f'Create 3 safety_override={mode}; base limit={maximum:.3f} m/s; '
+                f'navigation limit={self.cfg.max_linear:.3f} m/s')
+            if mode == 'full':
+                self.get_logger().warning('Create 3 cliff protection and backup limit are disabled')
+        finally:
+            self.destroy_client(setter)
+            self.destroy_client(getter)
 
     def start_worker(self):
         """A long mapping step must not hold up sensor callbacks or

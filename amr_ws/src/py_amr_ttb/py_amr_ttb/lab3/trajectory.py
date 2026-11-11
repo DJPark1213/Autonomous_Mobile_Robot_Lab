@@ -147,3 +147,23 @@ def command_candidates(state, preferred_v, preferred_w, config, dt):
         return tracking + .2*continuity, abs(w), w, v
 
     yield from sorted(alternatives, key=cost)
+
+
+def arc_obstacle_distance(points, curvature, direction, radius, cap):
+    """Conservative obstacle distance along a constant-curvature center path."""
+    nearest = float(np.linalg.norm(points, axis=1).min())-radius if len(points) else .025
+    spacing_limit = min(.025, max(.002, nearest))
+    distances = np.linspace(0., cap, max(2, math.ceil(cap/spacing_limit)+1))
+    signed = direction*distances
+    if abs(curvature) < 1e-6:
+        centers = np.column_stack((signed, np.zeros(len(signed))))
+    else:
+        centers = np.column_stack((np.sin(curvature*signed)/curvature,
+                                   (1-np.cos(curvature*signed))/curvature))
+    if not len(points):
+        return cap
+    spacing = distances[1]-distances[0]
+    midpoint = (centers[:-1]+centers[1:])/2
+    clearance = np.linalg.norm(midpoint[:, None, :]-points[None, :, :], axis=2)
+    blocked = np.flatnonzero(np.any(clearance <= radius+spacing/2, axis=1))
+    return float(distances[blocked[0]]) if len(blocked) else cap

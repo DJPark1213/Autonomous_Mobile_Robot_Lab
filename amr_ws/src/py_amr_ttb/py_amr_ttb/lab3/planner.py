@@ -261,6 +261,14 @@ class Planner:
         headings = list(np.linspace(-math.pi/2, math.pi/2, 13))
         if abs(goal_heading) <= math.pi/2:
             headings.append(goal_heading)
+        # Refine each coarse sector around its widest obstacle-free bearing.
+        # Full observed-footprint checks below validate every retained direction.
+        fine = np.linspace(-math.pi/2, math.pi/2, 361)
+        room = free_distances(local_scan.points, fine, c.radius, c.scoring_horizon)
+        for start in range(0, 360, 30):
+            sector = room[start:start+31]
+            best = np.flatnonzero(sector >= sector.max()-1e-6)
+            headings.append(float(fine[start+best[len(best)//2]]))
         candidates = []
         self.diagnostics = {}
         for heading in np.unique(headings):
@@ -286,25 +294,44 @@ class Planner:
             if len(local_scan.points):
                 clearance = max(0., float(np.linalg.norm(
                     positions[:, None, :]-local_scan.points[None, :, :], axis=2).min())-c.radius)
+            cruise = c.max_linear
+            if clearance < c.target_reserve:
+                target = replace(target, mode='PASSAGE')
+                cruise = min(.10, cruise/3)
+            turn_time = abs(heading)/c.max_angular
+            braking_time = max(0., abs(state.v)-cruise)/c.linear_braking
+            acceleration_time = abs(cruise-abs(state.v))/c.linear_acceleration
+            estimated_time = (distance/cruise + math.dist(target.point, goal)/c.max_linear
+                              + turn_time + braking_time + acceleration_time/2)
             progress = math.dist(pose[:2], goal)-math.dist(target.point, goal)
             score = (c.weight_goal*progress/c.scoring_horizon
                      + c.weight_travel*distance/c.target_distance
                      + c.weight_clearance*min(1., clearance/.35)
+                     - .1*estimated_time
                      - c.weight_heading*abs(heading)/math.pi
                      - c.weight_history*self.memory.penalty(pose[:2], pose[2]+heading, now))
             if self.target is not None and target.key == self.target.key:
                 score += .05
-            ranked.append((score, target, heading, distance))
+            ranked.append((score, target, heading, distance, estimated_time))
 
-        for score, target, heading, distance in sorted(ranked, key=lambda item: item[0], reverse=True):
+        for score, target, heading, distance, estimated_time in sorted(ranked, key=lambda item: item[0], reverse=True):
             local = (distance*math.cos(heading), distance*math.sin(heading))
             probe = replace(target, point=tuple(transform_points([local], state.pose)[0]))
             command = MotionController(c).step(state, scan, probe, now, c.control_period)
             if command.blocked or not (command.v or command.w):
-                continue
+                # A clear corridor may require braking and alignment first.
+                # Retain it only if stopping now and the stopped approach qualify.
+                controller = MotionController(c)
+                stop_clear, _ = controller.safe(state, scan, 0., 0., now)
+                stopped = replace(state, v=0., w=0.)
+                probe = replace(probe, mode='PASSAGE')
+                future = controller.step(stopped, scan, probe, now, c.control_period)
+                if not stop_clear or future.blocked or not (future.v or future.w):
+                    continue
+                target = replace(target, mode='PASSAGE')
             self.diagnostics.update(candidate_count=len(candidates), score=score,
-                                    selection='OPEN_SPACE', heading=heading)
-            if math.dist(target.point, goal) <= c.goal_tolerance:
+                                    selection='OPEN_SPACE', heading=heading, estimated_time=estimated_time)
+            if target.mode != 'PASSAGE' and math.dist(target.point, goal) <= c.goal_tolerance:
                 return replace(target, mode='FINAL', score=score)
             return replace(target, score=score)
         return None
@@ -398,6 +425,10 @@ class Planner:
                             and (sustained_block or no_progress))
         if self.target and self.target.mode == 'BACKTRACK' and not near and not failed_backtrack:
             return Plan(self.target, transform, now, revision)
+
+        if (self.target is not None and self.target.mode == 'PASSAGE'
+                and not near and committed and not sustained_block and not no_progress):
+            return Plan(self.target, transform, now, revision, diagnostics=self.diagnostics)
 
         if grid is None and self.route is None:
             target = self.select_local_target(state, scan, local_scan, pose, now,

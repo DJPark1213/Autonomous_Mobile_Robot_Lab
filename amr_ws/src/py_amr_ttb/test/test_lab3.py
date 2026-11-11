@@ -38,7 +38,7 @@ def scan(config, values=None, pose=(0., 0., 0.), sequence=0, stamp=0.):
 
 class GeometryTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = Lab3Config()
+        self.cfg = Lab3Config(max_linear=.30)
 
     def test_completed_but_old_plan_still_expires(self):
         state = RobotState((0., 0., 0.), 0., 0., 3., 3.)
@@ -224,7 +224,7 @@ class GeometryTests(unittest.TestCase):
 
     def test_config_allows_zero_weights_but_rejects_invalid_motion_limits(self):
         self.assertEqual(Lab3Config(weight_goal=0.).weight_goal, 0.)
-        for values in ({'max_linear': .4}, {'linear_braking': 0.}, {'goal_x': 100.},
+        for values in ({'max_linear': .47}, {'linear_braking': 0.}, {'goal_x': 100.},
                        {'front_sections': 1000}, {'revisit_min_age': 20.}):
             with self.assertRaises(ValueError):
                 Lab3Config(**values)
@@ -232,7 +232,7 @@ class GeometryTests(unittest.TestCase):
 
 class StateAndMotionTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = Lab3Config()
+        self.cfg = Lab3Config(max_linear=.30)
 
     def test_changing_waypoints_does_not_renew_turn_allowance(self):
         controller = MotionController(self.cfg)
@@ -372,8 +372,8 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertGreater(target.point[1], 3.)
         plan = Plan(target, (2., 3., 0.), 0.)
         result = MotionController(self.cfg).step_plan(state, sensor, plan, 0., .05)
-        self.assertEqual(result.reason, 'ALIGN')
-        self.assertEqual(result.v, 0.)
+        self.assertFalse(result.blocked)
+        self.assertGreaterEqual(result.v, 0.)
         self.assertGreater(result.w, 0.)
 
     def test_open_space_selection_replaces_wall_target_before_arrival(self):
@@ -407,6 +407,87 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertLess(result.v, state.v)
         self.assertEqual(result.reason, 'OBSTACLE_APPROACH')
         self.assertFalse(result.blocked)
+
+    def test_moderate_bend_tracks_without_stopping_for_alignment(self):
+        state = RobotState((0., 0., 0.), .15, 0., 0., 0.)
+        target = Target((math.cos(1.1), math.sin(1.1)))
+        result = MotionController(self.cfg).step(state, scan(self.cfg), target, 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertGreater(result.w, 0.)
+        self.assertFalse(result.blocked)
+        self.assertNotIn(result.reason, ('ALIGN', 'BRAKE_FOR_TURN'))
+
+    def test_passage_brakes_before_alignment_and_limits_cruise(self):
+        controller = MotionController(self.cfg)
+        state = RobotState((0., 0., 0.), .3, 0., 0., 0.)
+        result = controller.step(state, scan(self.cfg), Target((.5, .2), 'PASSAGE'), 0., .05)
+        self.assertLess(result.v, state.v)
+        self.assertEqual(result.w, 0.)
+        aligned = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        result = MotionController(self.cfg).step(
+            aligned, scan(self.cfg), Target((.6, 0.), 'PASSAGE'), 0., .05)
+        self.assertGreater(result.v, 0.)
+        self.assertLessEqual(result.v, self.cfg.max_linear/3)
+
+    def test_refined_opening_search_finds_off_grid_corridor(self):
+        from py_amr_ttb.lab3.planner import Planner
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        angle = math.radians(7.5)
+        walls = [transform_points([(-.5, y), (3., y)], (0., 0., angle))
+                 for y in (-.205, .205)]
+        sensor = process_scan(raycast(walls, (0., 0., 0.), count=1080),
+                              -math.pi, 2*math.pi/1080, .03, 6., self.cfg)
+        sensor = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        target = planner.select_local_target(state, sensor, sensor, state.pose, 0.)
+        self.assertIsNotNone(target)
+        self.assertEqual(target.mode, 'PASSAGE')
+        self.assertAlmostEqual(math.atan2(target.point[1], target.point[0]), angle, delta=.04)
+        self.assertGreater(planner.diagnostics['estimated_time'], 0.)
+
+    def test_narrow_corridor_completes_without_backtracking(self):
+        from py_amr_ttb.lab3.planner import Planner
+        from py_amr_ttb.lab3.coverage import prepare_coverage
+        from py_amr_ttb.lab3.simulate import plant, wall_distance
+        angle = math.radians(7.5)
+        cfg = replace(self.cfg, goal_x=math.cos(angle), goal_y=math.sin(angle))
+        walls = [transform_points([(-.5, y), (2., y)], (0., 0., angle))
+                 for y in (-.205, .205)]
+        planner = Planner(cfg, RunMemory(cfg))
+        controller = MotionController(cfg)
+        pose, v, w = (0., 0., 0.), 0., 0.
+        result = plan = None
+        for tick in range(500):
+            now = tick*.05
+            state = RobotState(pose, v, w, now, now)
+            sensor = process_scan(raycast(walls, pose, count=1080),
+                                  -math.pi, 2*math.pi/1080, .03, 6., cfg,
+                                  pose=pose, received=now, stamp=now)
+            sensor = replace(sensor, coverage=prepare_coverage((sensor,), bridge_small_gaps=True))
+            if tick % 4 == 0:
+                plan = planner.step(state, sensor, None, now,
+                                    result.blocked if result else False,
+                                    result.reason if result else '',
+                                    plan.target.key if plan and plan.target else None)
+            result = controller.step_plan(state, sensor, plan, now, .05)
+            self.assertGreaterEqual(result.v, 0.)
+            pose, v, w = plant(pose, v, w, result, .05)
+            self.assertGreaterEqual(wall_distance(walls, pose[:2]), cfg.robot_radius)
+            if plan.status == 'DONE' and abs(v) < .005:
+                break
+        self.assertEqual(plan.status, 'DONE')
+
+    def test_high_speed_default_reaches_hardware_cap_in_open_space(self):
+        config = Lab3Config()
+        self.assertEqual(config.max_linear, .46)
+        state = RobotState((0., 0., 0.), .46, 0., 0., 0.)
+        result = MotionController(config).step(
+            state, scan(config), Target((2., 0.)), 0., .05)
+        self.assertAlmostEqual(result.v, .46)
+        self.assertFalse(result.blocked)
+        with self.assertRaises(ValueError):
+            Lab3Config(max_linear=.461)
 
     def test_tracking_can_steer_above_settle_speed(self):
         controller = MotionController(self.cfg)
@@ -535,17 +616,15 @@ class StateAndMotionTests(unittest.TestCase):
         state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
         sensor = scan(self.cfg, raycast([((.222, -2.), (.222, 2.))], state.pose))
         result = MotionController(self.cfg).step(state, sensor, Target((2., 0.)), 0., .05)
-        self.assertEqual(result.reason, 'TRANSLATION_OBSTACLE')
+        self.assertEqual(result.reason, 'OBSTACLE_APPROACH')
         self.assertEqual((result.v, result.w), (0., 0.))
 
-    def test_slower_candidate_preserves_a_clear_direction(self):
+    def test_close_obstacle_stops_before_using_maneuvering_reserve(self):
         state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
         sensor = scan(self.cfg, raycast([((.225, -2.), (.225, 2.))], state.pose))
         result = MotionController(self.cfg).step(state, sensor, Target((2., 0.)), 0., .05)
-        self.assertEqual(result.reason, 'CLEARANCE')
-        self.assertAlmostEqual(result.v, .01)
-        self.assertEqual([attempt['clear'] for attempt in result.diagnostics['attempted_commands']],
-                         [False, True])
+        self.assertEqual(result.reason, 'OBSTACLE_APPROACH')
+        self.assertEqual((result.v, result.w), (0., 0.))
 
     def test_new_waypoint_exceeds_reached_threshold(self):
         from py_amr_ttb.lab3.planner import Planner
@@ -630,7 +709,7 @@ class StateAndMotionTests(unittest.TestCase):
 
 class PreparedCoverageTests(unittest.TestCase):
     def setUp(self):
-        self.cfg = Lab3Config()
+        self.cfg = Lab3Config(max_linear=.30)
 
     def test_small_bracketed_gap_only_supports_near_field(self):
         from py_amr_ttb.lab3.coverage import prepare_coverage
