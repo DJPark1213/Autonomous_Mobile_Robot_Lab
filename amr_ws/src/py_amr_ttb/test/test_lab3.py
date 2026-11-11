@@ -38,6 +38,46 @@ class GeometryTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_history_combines_complementary_coverage(self):
+        values = np.full(360, 3.)
+        values[175:186] = np.nan
+        current = scan(self.cfg, values, stamp=.2)
+        previous = scan(self.cfg, values, pose=(0., 0., math.pi/2), stamp=.1)
+        combined = replace(current, history=(previous,))
+        self.assertFalse(circles_observed(current, [[.4, 0.]], .22)[0])
+        self.assertTrue(circles_observed(combined, [[.4, 0.]], .22)[0])
+
+    def test_history_does_not_override_current_obstacle(self):
+        values = np.full(360, 3.)
+        values[180] = .4
+        current = replace(scan(self.cfg, values), history=(scan(self.cfg),))
+        self.assertFalse(circles_observed(current, [[.4, 0.]], .22)[0])
+
+    def test_footprint_can_require_coverage_from_both_scans(self):
+        first = np.full(360, 3.)
+        second = first.copy()
+        first[170:174] = np.nan
+        second[187:191] = np.nan
+        current, previous = scan(self.cfg, first), scan(self.cfg, second)
+        self.assertFalse(circles_observed(current, [[.5, 0.]], .22)[0])
+        self.assertFalse(circles_observed(previous, [[.5, 0.]], .22)[0])
+        self.assertTrue(circles_observed(replace(current, history=(previous,)),
+                                         [[.5, 0.]], .22)[0])
+
+    def test_recent_obstacle_is_retained(self):
+        values = np.full(360, 3.)
+        values[180] = .4
+        combined = replace(scan(self.cfg), history=(scan(self.cfg, values),))
+        self.assertFalse(circles_observed(combined, [[.4, 0.]], .22)[0])
+
+    def test_expired_history_cannot_authorize_motion(self):
+        values = np.full(360, 3.)
+        values[175:186] = np.nan
+        current = replace(scan(self.cfg, values, stamp=1.),
+                          history=(scan(self.cfg, stamp=0.),))
+        state = RobotState((0., 0., 0.), 0., 0., 1., 1.)
+        self.assertFalse(MotionController(self.cfg).safe(state, current, .2, 0., 1.)[0])
+
     def test_stationary_speed_noise_does_not_block_alignment(self):
         values = np.full(360, 2.)
         values[120:123] = np.nan

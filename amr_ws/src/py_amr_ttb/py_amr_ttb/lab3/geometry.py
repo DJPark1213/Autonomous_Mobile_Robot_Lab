@@ -368,9 +368,25 @@ def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=
     if occupied_radius > 0:
         fully_observed |= (np.linalg.norm(centers-np.asarray(occupied_center), axis=1)
                            + radii <= coverage_radius + RANGE_TOLERANCE)
+    history_recovered = 0
+    if scan.history:
+        sources = [replace(scan, history=())] + [
+            replace(scan_at_pose(previous, scan.pose), history=()) for previous in scan.history]
+        # Retain recent obstacle evidence too. Old free space cannot erase a hit.
+        for previous in sources[1:]:
+            if len(previous.points):
+                distances = centers[:, None, :] - previous.points[None, :, :]
+                misses_hits &= np.all(np.sum(distances**2, axis=2) > radii[:, None]**2, axis=1)
+        for index in np.flatnonzero(misses_hits & ~fully_observed):
+            if _covered_by_scans(sources, centers[index], radii[index],
+                                 occupied_radius, occupied_center):
+                fully_observed[index] = True
+                history_recovered += 1
     if diagnostics is not None:
         diagnostics.update(
             footprints=len(centers),
+            history_scans=len(scan.history),
+            history_recovered=history_recovered,
             hit_rejections=int(np.count_nonzero(~misses_hits)),
             coverage_rejections=int(np.count_nonzero(~fully_observed)),
             unknown_beams=int(np.count_nonzero(~scan.known)),
@@ -385,6 +401,55 @@ def circles_observed(scan, centers, radius, occupied_radius=0., occupied_center=
             if len(hits) else None,
         )
     return misses_hits & fully_observed
+
+
+def _covered_by_scans(sources, center, radius, occupied_radius, occupied_center):
+    """Certify a disk by covering intersecting squares with observed disks.
+
+    Each accepted square is wholly observed by one source or the occupied body.
+    Subdivide ambiguous squares down to 1 cm. Unresolved leaves fail closed.
+    """
+    for source in sources[1:]:
+        if circles_observed(source, [center], radius, occupied_radius, occupied_center)[0]:
+            return True
+    # Reject obvious holes cheaply before attempting the full area certificate.
+    # Passing these probes alone never authorizes a footprint.
+    bearings = np.linspace(-math.pi, math.pi, 128, endpoint=False)
+    probes = np.vstack((center, center + radius*np.column_stack(
+        (np.cos(bearings), np.sin(bearings)))))
+    probe_coverage = np.zeros(len(probes), dtype=bool)
+    if occupied_radius > 0:
+        probe_coverage |= np.linalg.norm(probes-np.asarray(occupied_center), axis=1) <= (
+            occupied_radius + OCCUPIED_COVERAGE_TOLERANCE)
+    for source in sources:
+        probe_coverage |= observed(source, probes)
+    if not probe_coverage.all():
+        return False
+    cells = [(np.asarray(center), float(radius))]
+    while cells:
+        cell_centers = np.array([cell[0] for cell in cells])
+        half_sizes = np.array([cell[1] for cell in cells])
+        covered = np.zeros(len(cells), dtype=bool)
+        for source in sources:
+            remaining = np.flatnonzero(~covered)
+            if not len(remaining):
+                break
+            covered[remaining] = circles_observed(
+                source, cell_centers[remaining], half_sizes[remaining]*math.sqrt(2),
+                occupied_radius, occupied_center)
+        unresolved = np.flatnonzero(~covered)
+        if np.any(half_sizes[unresolved] <= .005):
+            return False
+        children = []
+        for index in unresolved:
+            half = half_sizes[index]/2
+            for offset in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+                child = cell_centers[index] + np.asarray(offset)*half
+                nearest = np.maximum(np.abs(child-center)-half, 0.)
+                if np.dot(nearest, nearest) <= radius**2:
+                    children.append((child, half))
+        cells = children
+    return True
 
 
 def circles_clear(scan, centers, radius, occupied_radius=0., occupied_center=(0., 0.), diagnostics=None):
@@ -413,6 +478,13 @@ def observed_travel(scan, heading, radius, cap, step=0.05):
     sample_distances = np.arange(0.0, contact_limit + 1e-9, step)
     direction = np.array([math.cos(heading), math.sin(heading)])
     centers = sample_distances[:, None] * direction
+    if scan.history:
+        # Only a contiguous clear prefix can contribute to travel. Stop history
+        # recovery at its first failure instead of checking unreachable positions.
+        for distance, center in zip(sample_distances, centers):
+            if not circles_observed(scan, [center], radius, occupied_radius=radius)[0]:
+                return max(0., float(distance-step))
+        return max(0., contact_limit-step)
     clear_footprints = circles_observed(scan, centers, radius, occupied_radius=radius)
     blocked_indices = np.flatnonzero(~clear_footprints)
 

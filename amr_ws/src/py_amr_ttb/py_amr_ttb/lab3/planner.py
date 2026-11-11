@@ -7,6 +7,7 @@ available.
 """
 
 import math
+from dataclasses import replace
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
@@ -122,6 +123,8 @@ class Planner:
         # 1. Targets use map coordinates; direction checks use the robot's frame now.
         c, grid = self.cfg, mapper.grid
         pose = compose(mapper.transform, state.pose)
+        scan = replace(scan, history=tuple(previous for previous in scan.history
+                       if 0 <= now-previous.received <= c.sensor_timeout))
         local_scan = scan_at_pose(scan, state.pose)
         self.memory.record(pose, now)
 

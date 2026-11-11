@@ -33,6 +33,7 @@ class Scan:
     received: float
     pose: tuple
     sequence: int
+    history: tuple = ()
 
     @property
     def endpoints(self):

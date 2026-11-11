@@ -99,6 +99,8 @@ class MotionController:
         accuracy.
         """
         scan_age = max(0.0, now - scan.received)
+        scan = replace(scan, history=tuple(previous for previous in scan.history
+                       if 0 <= now-previous.received <= self.cfg.sensor_timeout))
         trajectory = rollout(state, v, w, self.cfg, scan_age)
         odometry_positions = np.asarray(trajectory)[:, :2]
         scan_frame_positions = inverse_points(odometry_positions, scan.pose)

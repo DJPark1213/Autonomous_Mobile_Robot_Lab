@@ -5,7 +5,8 @@ Validate time and frames, synchronize scans with odometry, and publish velocity 
 one control callback while planning runs separately.
 """
 
-from dataclasses import fields
+from dataclasses import fields, replace
+from collections import deque
 import math
 import json
 import multiprocessing as mp
@@ -72,6 +73,7 @@ class Lab3Node(Node):
         self.tracker = StateTracker(self.cfg)
         self.controller = MotionController(self.cfg)
         self.scan = self.plan = None
+        self.scan_history = deque(maxlen=6)
         self.sequence = 0
         self.last_scan_stamp = float('-inf')
         self.last_tick = time.monotonic()
@@ -183,6 +185,7 @@ class Lab3Node(Node):
                 received=received,
                 sequence=self.sequence,
             )
+            self.scan_history.append(scan)
             self.scan, self.last_scan_stamp = scan, stamp
         except (ValueError, TransformException) as error:
             self.scan = None
@@ -205,6 +208,11 @@ class Lab3Node(Node):
                 if key in received_plan.diagnostics:
                     self.get_logger().warning(key+' '+str(received_plan.diagnostics[key]))
         state, scan, plan = self.tracker.latest, self.scan, self.plan
+        if scan is not None:
+            scan = replace(scan, history=tuple(
+                previous for previous in self.scan_history
+                if previous.sequence != scan.sequence
+                and 0 <= now-previous.received <= self.cfg.sensor_timeout))
         result = MotionResult(reason='WAITING_FOR_SENSORS')
         # Missing prerequisites must not leave the previous motion command active.
         valid = (state is not None and scan is not None and self.tracker.fresh(now)
@@ -300,6 +308,7 @@ class Lab3Node(Node):
         self.stop_worker()
         self.tracker = StateTracker(self.cfg)
         self.scan = self.plan = self.fault = None
+        self.scan_history.clear()
         self.last_scan_stamp = self.last_submit = float('-inf')
         self.start_worker()
         self.paused = False
