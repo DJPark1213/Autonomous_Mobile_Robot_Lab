@@ -275,7 +275,7 @@ class Lab3Config:
             raise ValueError('robot_namespace must be absolute without trailing slash')
         if self.max_linear > .31 or self.max_angular > 1.9:
             raise ValueError('Keep commands within TurtleBot 4 safety-enabled limits')
-        if self.reverse_speed > self.max_linear or self.radius < .20:
+        if self.reverse_speed > self.max_linear or self.robot_radius < .18 or self.safety_margin < .01:
             raise ValueError('Invalid reverse speed or footprint')
         if not 0 < self.scan_known_fraction <= 1 or self.free_threshold >= 0:
             raise ValueError('Invalid observation thresholds')
