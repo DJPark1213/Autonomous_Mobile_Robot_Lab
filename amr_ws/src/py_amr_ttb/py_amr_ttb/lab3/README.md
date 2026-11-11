@@ -183,6 +183,41 @@ acceleration and braking settings are estimates that require measurement.
 
 ## Verification and limits
 
+### Live timing and incomplete scan coverage
+
+Sensor freshness uses local monotonic receipt time. Robot timestamps still align
+odometry, scans, and TF. A constant robot-to-PC clock offset requires no SSH or
+NTP calibration. Receipt time cannot detect transport delay before arrival.
+
+The node retains up to six scans within the existing 0.40-second sensor timeout.
+Planning and motion combine pose-aligned coverage from these scans and retain
+recent obstacle hits. Unresolved coverage cells fail closed. A 1 mm tolerance at
+the already-occupied boundary accommodates tiny pose drift, while obstacle
+contact retains the configured clearance radius.
+
+Heading search rotates through angular sections across worker updates, yielding
+after a section when the search has spent half the map period. This is a soft
+budget: a section and mapping can exceed it. SEARCHING_ROUTE means another
+section will be examined on a subsequent update. Selection can now accept the
+best candidate from a partial search rather than ranking every section first.
+
+Worker submissions respect map_period even after blockage. ALIGN and OBSERVE
+hold a target for at most one full-turn interval at max_angular before ordinary
+recovery resumes. OBSERVE requests a checked, slow in-place turn when translation
+fails with unknown beams and the predicted stop is clear. Sensor/compute waiting
+does not alone count as failed positional progress.
+
+Plans expire from their input snapshot time. completed_at and
+input_age_at_completion record computation delay separately. Before publishing,
+the node rechecks elapsed control time and sensor receipt ages. An overrun sends
+zero with CONTROL_DEADLINE. This check cannot preempt a running Python callback
+or retract the previous command during that callback; hard real-time execution
+has not been established.
+
+Failure JSON captures include scan history. NAV_DIAGNOSTIC includes coverage,
+obstacle, history, timing, and planner-search details. Captured-frame replay and
+unit tests do not establish sustained progress under live ROS scheduling.
+
 Offline checks from the repository root (Python 3.10+ and NumPy):
 
 ```bash

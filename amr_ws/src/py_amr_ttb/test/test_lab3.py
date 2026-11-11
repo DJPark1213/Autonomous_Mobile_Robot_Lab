@@ -38,6 +38,30 @@ class GeometryTests(unittest.TestCase):
     def setUp(self):
         self.cfg = Lab3Config()
 
+    def test_completed_but_old_plan_still_expires(self):
+        state = RobotState((0., 0., 0.), 0., 0., 3., 3.)
+        plan = Plan(Target((1., 0.)), (0., 0., 0.), 0.,
+                    diagnostics={'completed_at': 3.})
+        result = MotionController(self.cfg).step_plan(
+            state, scan(self.cfg, stamp=3.), plan, 3., .05)
+        self.assertEqual(result.reason, 'WAITING_FOR_FRESH_PLAN')
+
+    def test_alignment_holds_target_past_positional_stall_timeout(self):
+        from py_amr_ttb.lab3.mapping import Mapper
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        target = Target((0., 1.))
+        planner.target = target
+        planner.started = planner.progress_at = 0.
+        planner.anchor = (0., 0.)
+        mapper = Mapper(self.cfg)
+        for now in (2.9, 3.1, 3.5):
+            state = RobotState((0., 0., .1*now), 0., .1, now, now)
+            result = planner.step(state, scan(self.cfg, stamp=now), mapper,
+                                  now, False, 'ALIGN')
+            self.assertIs(result.target, target)
+            self.assertEqual(result.diagnostics['holding_for'], 'ALIGN')
+
     def test_history_combines_complementary_coverage(self):
         values = np.full(360, 3.)
         values[175:186] = np.nan

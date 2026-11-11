@@ -7,6 +7,7 @@ available.
 """
 
 import math
+import time
 from dataclasses import replace
 import numpy as np
 
@@ -36,6 +37,9 @@ class Planner:
         self.route_index = 0
         self.speeds = speed_profile(replay_route, config) if replay_route is not None else None
         self.diagnostics = {}
+        self.alignment_started = None
+        self.search_section = 0
+        self.empty_search_sections = 0
 
     def sections(self):
         """An escape from a blocked forward path may lie beside or
@@ -113,7 +117,7 @@ class Planner:
         self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
-    def step(self, state, scan, mapper, now, blocked=False):
+    def step(self, state, scan, mapper, now, blocked=False, motion_reason=''):
         """A useful target can become blocked or lead back into a failed area.
 
         Keep it, replace it, or request recovery using the checks below in order.
@@ -127,6 +131,11 @@ class Planner:
                        if 0 <= now-previous.received <= c.sensor_timeout))
         local_scan = scan_at_pose(scan, state.pose)
         self.memory.record(pose, now)
+        aligning = motion_reason in ('ALIGN', 'OBSERVE', 'BRAKE_FOR_TURN')
+        if not aligning:
+            self.alignment_started = None
+        elif self.alignment_started is None:
+            self.alignment_started = now
 
         if self.started is None:
             self.started = self.progress_at = now
@@ -176,6 +185,15 @@ class Planner:
         goal_angle = math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])
         capped = grid.closed_ahead(pose[:2], goal_angle)
         stalled = now-self.progress_at >= c.stall_timeout or revisited or capped
+        if motion_reason in ('WAITING_FOR_FRESH_PLAN', 'WAITING_FOR_SENSORS',
+                             'CONTROL_DEADLINE', 'SEARCHING_ROUTE'):
+            self.progress_at = now
+            stalled = capped
+        if (aligning and self.target is not None and
+                now-self.alignment_started < 2*math.pi/c.max_angular):
+            self.progress_at = now
+            return Plan(self.target, mapper.transform, now, grid.revision,
+                        diagnostics=dict(self.diagnostics, holding_for=motion_reason))
 
         # 6. Remember the failed direction and seek a verified path to an earlier point.
         if stalled:
@@ -233,7 +251,13 @@ class Planner:
             math.atan2(c.goal_y-pose[1], c.goal_x-pose[0])-pose[2]
         )
         options = []
-        for lower, upper in self.sections():
+        sections = self.sections()
+        start_section = self.search_section
+        search_started = time.perf_counter()
+        searched = 0
+        for offset in range(len(sections)):
+            section_index = (start_section+offset) % len(sections)
+            lower, upper = sections[section_index]
             headings = list(np.linspace(lower, upper, c.heading_samples))
 
             # Regular samples could miss a clear direction exactly toward the goal.
@@ -256,6 +280,18 @@ class Planner:
                     options.append(best)
                 else:
                     self.diagnostics['closed_sections'] = self.diagnostics.get('closed_sections', 0) + 1
+            searched += 1
+            self.search_section = (section_index+1) % len(sections)
+            if time.perf_counter()-search_started >= c.map_period/2:
+                break
+
+        self.diagnostics['sections_searched'] = searched
+        self.empty_search_sections = self.empty_search_sections+searched if not options else 0
+        if not options and self.empty_search_sections < len(sections):
+            return Plan(None, mapper.transform, now, grid.revision, 'SEARCHING_ROUTE',
+                        diagnostics=dict(self.diagnostics))
+        if not options:
+            self.empty_search_sections = 0
 
         # With no surviving section, try retreating; no return point means no target.
         if not options:

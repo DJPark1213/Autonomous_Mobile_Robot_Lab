@@ -224,18 +224,27 @@ class Lab3Node(Node):
         elif not self.worker.is_alive():
             result.reason = 'WORKER_STOP: '+str(plan.diagnostics if plan else '')
         elif valid:
-            if now-self.last_submit >= self.cfg.map_period or self.result.blocked:
-                if put_latest(self.incoming, Work(state, scan, now, self.result.blocked)):
+            if now-self.last_submit >= self.cfg.map_period:
+                if put_latest(self.incoming, Work(state, scan, now, self.result.blocked,
+                                                  self.result.reason)):
                     self.last_submit = now
             result = self.controller.step_plan(state, scan, plan, now, dt)
         self.result = result
+        finished = time.monotonic()
+        if finished-started > self.cfg.control_period or (valid and (
+                finished-state.received > self.cfg.sensor_timeout or
+                finished-scan.received > self.cfg.sensor_timeout)):
+            result = MotionResult(reason='CONTROL_DEADLINE', diagnostics={
+                'elapsed': finished-started, 'budget': self.cfg.control_period})
+            self.result = result
         self.publish(result.v, result.w)
         if result.reason != self.last_reason:
             self.get_logger().info(result.reason)
             self.last_reason = result.reason
         failure_details = {}
         if result.reason in ('NO_LOCAL_ROUTE', 'EMERGENCY_STOP', 'BRAKE_PATH_BLOCKED',
-                             'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN'):
+                             'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN',
+                             'CONTROL_DEADLINE', 'SEARCHING_ROUTE', 'OBSERVE'):
             failure_details = dict(
                 reason=result.reason,
                 odom_age=now-state.received if state else None,

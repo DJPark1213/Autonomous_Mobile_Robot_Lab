@@ -99,8 +99,10 @@ class MotionController:
         accuracy.
         """
         scan_age = max(0.0, now - scan.received)
-        scan = replace(scan, history=tuple(previous for previous in scan.history
-                       if 0 <= now-previous.received <= self.cfg.sensor_timeout))
+        history = tuple(previous for previous in scan.history
+                        if 0 <= now-previous.received <= self.cfg.sensor_timeout)
+        if len(history) != len(scan.history):
+            scan = replace(scan, history=history)
         trajectory = rollout(state, v, w, self.cfg, scan_age)
         odometry_positions = np.asarray(trajectory)[:, :2]
         scan_frame_positions = inverse_points(odometry_positions, scan.pose)
@@ -250,6 +252,12 @@ class MotionController:
         # EMERGENCY_STOP if the predicted braking path itself fails clearance.
         diagnostics = {}
         safe, trajectory = self.safe(state, scan, 0., 0., now, diagnostics)
+        if (safe and abs(state.v) < .005 and diagnostics.get('unknown_beams', 0)):
+            observe_w = approach(state.w, .2 if heading >= 0 else -.2,
+                                 c.angular_acceleration, c.angular_braking, dt)
+            clear, observation_path = self.safe(state, scan, 0., observe_w, now)
+            if clear:
+                return MotionResult(0., observe_w, 'OBSERVE', False, observation_path, diagnostics)
         return MotionResult(
             0., 0., 'BRAKE_PATH_BLOCKED' if safe else 'EMERGENCY_STOP', True, trajectory,
             diagnostics,

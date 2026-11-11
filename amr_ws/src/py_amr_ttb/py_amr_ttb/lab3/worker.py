@@ -32,6 +32,7 @@ class Work:
     scan: object
     now: float
     blocked: bool = False
+    motion_reason: str = ''
 
 
 def put_latest(queue, value):
@@ -120,7 +121,8 @@ class NavigationEngine:
         if work.now-self.last_map >= self.cfg.map_period-1e-9:
             self.mapper.update(work.scan, work.state.covariance)
             self.last_map = work.now
-        plan = self.planner.step(work.state, work.scan, self.mapper, work.now, work.blocked)
+        plan = self.planner.step(work.state, work.scan, self.mapper, work.now, work.blocked,
+                                 work.motion_reason)
         plan.diagnostics = dict(plan.diagnostics, worker_seconds=time.perf_counter()-started,
                                 alignment=self.mapper.alignment,
                                 pose_variance=self.mapper.estimator.covariance.diagonal().tolist())
@@ -178,6 +180,12 @@ def worker_main(config, incoming, outgoing, stopping, save_requested):
                     plan.diagnostics['failure_capture'] = str(path)
                 except Exception as error:
                     plan.diagnostics['failure_capture_error'] = str(error)
+            # A plan's expiry starts when the worker produces it. Its target is
+            # subsequently checked against current odometry and scans by motion
+            # control. Keep input age visible separately from result freshness.
+            completed = time.monotonic()
+            plan.diagnostics['input_age_at_completion'] = completed-work.now
+            plan.diagnostics['completed_at'] = completed
             put_latest(outgoing, plan)
     except Exception as error:
         put_latest(outgoing, Plan(None, (0., 0., 0.), time.monotonic(), status='ERROR',
