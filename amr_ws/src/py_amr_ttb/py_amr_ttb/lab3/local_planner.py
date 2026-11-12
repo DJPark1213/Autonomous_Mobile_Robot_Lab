@@ -132,7 +132,9 @@ class TrajectoryPlanner:
                 # Compare all candidates with the same approach direction so
                 # passing that point does not reward turning back toward it.
                 alignment = abs(heading)-abs(normalize_angle(bearing-end[2]))
-                score = progress+.18*alignment+.08*v-.015*abs(w-self.previous[1])
+                score = (progress+c.trajectory_alignment_weight*alignment
+                         +c.trajectory_speed_weight*v
+                         -c.trajectory_steering_weight*abs(w-self.previous[1]))
                 if v < 0:
                     score -= .12
                 candidates.append((score, float(v), float(w), path))

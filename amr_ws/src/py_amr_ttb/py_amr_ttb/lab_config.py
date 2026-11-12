@@ -158,10 +158,14 @@ class Lab3Config:
     # Bound scan-local route search and acceleration-aware trajectory sampling.
     local_extent: float = 2.4
     local_spacing: float = 0.05
-    local_lookahead: float = 0.65
+    local_lookahead: float = 0.78
     trajectory_horizon: float = 0.70
     angular_response_fraction: float = 0.75
     heading_gain: float = 2.0
+    # Rank route alignment, forward speed and steering continuity after rollout.
+    trajectory_alignment_weight: float = 0.08
+    trajectory_speed_weight: float = 0.08
+    trajectory_steering_weight: float = 0.015
     # Bound saved-route lookahead during replay.
     target_distance: float = 1.0
     # Detect unproductive motion and bound measured reverse travel.
@@ -216,7 +220,8 @@ class Lab3Config:
         """
         signed = {'goal_x', 'goal_y', 'grid_origin_x', 'grid_origin_y', 'free_threshold'}
         nonnegative = {'route_margin', 'command_latency', 'alignment_min_gain',
-                       'alignment_ambiguity_margin'}
+                       'alignment_ambiguity_margin', 'trajectory_alignment_weight',
+                       'trajectory_speed_weight', 'trajectory_steering_weight'}
         for field in fields(self):
             value = getattr(self, field.name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):

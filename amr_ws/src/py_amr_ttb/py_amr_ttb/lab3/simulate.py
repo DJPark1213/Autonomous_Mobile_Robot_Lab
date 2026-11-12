@@ -37,6 +37,10 @@ def course(name):
     """
     if name in ('photo_slalom', 'photo_switchback'):
         return photo_course(name)
+    if name == 'example_course':
+        return example_course()
+    if name in ('maze_s_bend', 'maze_chicane', 'maze_offset_gate', 'maze_double_bend'):
+        return maze_course(name)
     boundary = rectangle(-1., -2., 5., 2.)
     if name == 'straight':
         return boundary, (3., 0.)
@@ -95,6 +99,91 @@ def photo_course(name):
         raise ValueError(name)
     walls = [(a, b) for outline in outlines for a, b in zip(outline, outline[1:])]
     return walls, goal
+
+
+def example_course():
+    """Use the approved angular black-line checkpoint drawing as the boundary.
+
+    Vertices are traced in its 1033 x 1523 image coordinates. The assumed
+    4 mm/pixel scale is not surveyed. Checkpoint guides are not walls; +x points
+    toward the top of the drawing and +y toward its left.
+    """
+    outlines = [
+        # Left free-space boundary, including attached protrusions.
+        [(464,1446),(511,1366),(502,1320),(487,1308),(456,1298),
+         (454,1264),(482,1223),(463,1202),(422,1195),(389,1167),
+         (389,1120),(331,1070),(331,1025),(298,994),(257,994),
+         (221,1036),(202,1035),(184,1017),(185,841),
+         (209,848),(242,879),(300,879),(358,823),(358,789),
+         (301,789),(268,758),(223,751),(219,792),(185,841),
+         (173,787),(176,697),(199,628),(198,494),(235,531),
+         (305,531),(379,578),(401,602),(403,648),(434,678),
+         (513,678),(513,625),(573,625),(593,602),(593,570),
+         (543,515),(471,515),(474,576),(432,580),(402,557),
+         (401,525),(361,484),(306,479),(320,457),(320,437),
+         (366,413),(350,380),(407,335),(407,307),(389,287),
+         (389,255),(420,218),(420,190),(394,164),(411,142),
+         (375,101),(253,119)],
+        # Right free-space boundary and lower connected zigzag.
+        [(700,1446),(673,1381),(750,1381),(750,1347),(737,1335),
+         (718,1337),(689,1352),(693,1244),(680,1226),(649,1221),
+         (615,1158),(562,1124),(562,1091),(544,1073),(495,1053),
+         (495,1022),(452,983),(452,922),(481,887),(545,887),
+         (545,840),(568,811),(593,811),(617,826),(665,826),
+         (729,751),(773,751),(794,736),(867,737),(890,714),
+         (890,674),(830,592),(760,592),(700,530),(700,482),
+         (712,460),(768,460),(829,504),(850,504),(876,482),
+         (877,452),(847,303),(798,242),(733,242),(673,170),
+         (582,170),(547,145),(544,78)],
+        # Exterior edges close the solid wall regions shown in the drawing.
+        [(253,119),(194,494),(176,697)],
+        [(184,1017),(193,1180),(242,1323),(456,1298)],
+        [(750,1381),(822,1381),(856,1220),(875,1000),(890,714)],
+        [(890,674),(876,482),(865,300),(830,78),(544,78)],
+        # The upper central island is separate from both walls.
+        [(562,247),(604,236),(640,266),(654,337),(625,390),
+         (563,369),(545,298),(562,247)],
+    ]
+    def metres(point):
+        return ((1460-point[1])*.004, (595-point[0])*.004)
+    walls = [(metres(a), metres(b)) for outline in outlines
+             for a, b in zip(outline, outline[1:])]
+    return walls, metres((475,62))
+
+
+
+def maze_course(name):
+    """Mix free-standing diamonds and wall intrusions in four fixed test layouts.
+
+    Coordinates are metres. Start at the origin facing +x; the outer boundaries
+    follow the given centreline with vertical half-width, not perpendicular width.
+    """
+    layouts = {
+        'maze_s_bend': (
+            [(-.5, 0.), (.7, 0.), (2., .6), (3.3, .3), (4.6, -.5), (6., 0.), (7., 0.)],
+            1.05, [(1.5, .35, .35, .4), (4.3, -.3, .35, .4)],
+            [[(3., 1.419), (3., .85), (3.25, .85), (3.25, 1.362)]], (6.7, 0.)),
+        'maze_chicane': (
+            [(-.5, 0.), (7., 0.)], 1.1,
+            [(1.25, .15, .35, .4), (4.9, -.15, .4, .45)],
+            [[(2.5, -1.1), (2.5, -.1), (2.75, -.1), (2.75, -1.1)],
+             [(3.65, 1.1), (3.65, .1), (3.9, .1), (3.9, 1.1)]], (6.7, 0.)),
+        'maze_offset_gate': (
+            [(-.5, 0.), (2.7, 0.), (3.8, -.45), (5.3, -.45), (6.5, .15), (7., .15)],
+            1., [(1.4, 0., .4, .45), (5.15, -.25, .35, .4)],
+            [[(3.8, .55), (3.8, -.35), (4., -.35), (4., .55)]], (6.7, .15)),
+        'maze_double_bend': (
+            [(-.5, 0.), (.8, 0.), (2.2, .85), (3.3, .85), (4.7, -.55), (5.8, -.55), (7., .1)],
+            1.1, [(1.7, .4, .35, .4), (3.6, .4, .35, .4), (5.6, -.4, .35, .4)],
+            [[(2.7, -.25), (2.7, .25), (2.95, .25), (2.95, -.25)],
+             [(6.4, .875), (6.4, .4), (6.6, .4), (6.6, .983)]], (6.7, -.06)),
+    }
+    centers, width, diamonds, intrusions, goal = layouts[name]
+    outlines = [[(x, y+side*width) for x, y in centers] for side in (-1., 1.)]
+    outlines += intrusions
+    for x, y, rx, ry in diamonds:
+        outlines.append([(x-rx, y), (x, y+ry), (x+rx, y), (x, y-ry), (x-rx, y)])
+    return [(a, b) for outline in outlines for a, b in zip(outline, outline[1:])], goal
 
 
 def passage_course(obstacle='empty', width=.42, offset=-.25):
@@ -235,7 +324,8 @@ def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner',
                         'corridor', 'staggered', 'diamond40', 'diamond42', 'extruded_wall42',
-                        'photo_slalom', 'photo_switchback'),
+                        'photo_slalom', 'photo_switchback', 'example_course', 'maze_s_bend', 'maze_chicane',
+                        'maze_offset_gate', 'maze_double_bend'),
                         default='obstacle')
     parser.add_argument('--seconds', type=float, default=90.)
     parser.add_argument('--output', type=Path)

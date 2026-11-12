@@ -199,7 +199,10 @@ class GeometryTests(unittest.TestCase):
 
     def test_config_rejects_invalid_motion_and_search_limits(self):
         for values in ({'max_linear': .47}, {'max_angular': 2.47}, {'linear_braking': 0.}, {'goal_x': 100.},
-                       {'local_spacing': .001}, {'angular_response_fraction': 2.}):
+                       {'local_spacing': .001}, {'angular_response_fraction': 2.},
+                       {'trajectory_alignment_weight': -.1},
+                       {'trajectory_speed_weight': float('nan')},
+                       {'trajectory_steering_weight': float('inf')}):
             with self.assertRaises(ValueError):
                 Lab3Config(**values)
 
@@ -620,6 +623,17 @@ class MappingAndReplayTests(unittest.TestCase):
 
 
 class CourseTests(unittest.TestCase):
+    def test_mixed_diamond_wall_mazes_complete(self):
+        for name in ('maze_s_bend', 'maze_chicane', 'maze_offset_gate', 'maze_double_bend',
+                     'example_course'):
+            with self.subTest(course=name), tempfile.TemporaryDirectory() as directory:
+                _, goal = course(name)
+                cfg = Lab3Config(goal_x=goal[0], goal_y=goal[1], alignment_enabled=False,
+                                 run_file=str(Path(directory)/'run.npz'))
+                result = simulate(name, cfg, seconds=60.)
+                self.assertTrue(result['completed'])
+                self.assertGreaterEqual(result['minimum_clearance'], cfg.radius)
+
     def test_diamond_enters_narrow_passage_without_reverse_or_stationary_turn(self):
         for name in ('diamond42', 'diamond40'):
             with self.subTest(course=name), tempfile.TemporaryDirectory() as directory:

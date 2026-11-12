@@ -60,10 +60,20 @@ escape from every maze or visibility configuration.
 | Command-plan lifetime | Smaller of `plan_timeout` and two worker intervals: 0.40 s |
 | Candidate horizon / supervisor horizon | 0.70 s / 0.50 s, each followed by braking |
 | Prediction sampling | 0.05 s, with enlarged midpoint footprints between samples |
-| Local guide lookahead | 0.65 m |
+| Local guide lookahead | 0.78 m |
 | Forward / reverse speed caps | 0.46 / 0.08 m/s |
 | Angular speed cap | 2.46 rad/s |
 | Physical radius / clearance allowance | 0.18 / 0.01 m |
+| Trajectory alignment / speed / steering-change weights | 0.08 / 0.08 / 0.015 |
+
+`trajectory_alignment_weight`, `trajectory_speed_weight`, and
+`trajectory_steering_weight` control candidate ranking. They multiply heading
+improvement, signed forward speed, and absolute steering change respectively;
+route progress has unit weight. These nonnegative weights do not relax the
+stopping-sweep or observed-space checks.
+
+Both Lab 3 launch files use these shared `Lab3Config` defaults for learning and
+replay. No tuning arguments are needed for the standard launch commands.
 
 These are scheduling targets and model assumptions, not measured hardware
 performance. The circular collision radius is 0.19 m. A nominally wide enough
@@ -181,7 +191,21 @@ PYTHONPATH=amr_ws/src/py_amr_ttb python3 -m py_amr_ttb.lab3.simulate \
 ```
 
 Scenarios include `straight`, `obstacle`, `corner`, `pocket`, `corridor`,
-`staggered`, `diamond40`, `diamond42`, and `extruded_wall42`. Passage tests hold
+`staggered`, `diamond40`, `diamond42`, and `extruded_wall42`. The photo approximations
+are `photo_slalom` and `photo_switchback`. `example_course` approximates the
+approved angular black-line checkpoint drawing (1033 by 1523 pixels), with an
+assumed 4 mm/pixel scale, entering from the bottom and finishing near the top.
+Connected wall boundaries and the separate upper island follow that outline.
+The fixture is not a surveyed map; checkpoint guides are not obstacles.
+For tuning comparisons, weight `example_course` at 65%, the two earlier photo
+courses at 10% each, and the four generated mazes at 3.75% each. These are benchmark
+weights, not controller inputs; a better average does not excuse a collision or
+failure to finish. Compare elapsed time (50%), integrated absolute rotation (25%)
+and total absolute linear-speed variation (25%), normalized to the same baseline
+on each course. Validate finalists with shifted starts and slower motor response.
+Four additional mixed-obstacle courses
+are `maze_s_bend`, `maze_chicane`, `maze_offset_gate`, and `maze_double_bend`;
+these combine diamond islands, wall protrusions and bending corridors. Passage tests hold
 the entrance offset fixed while varying obstacle shape or width. Reports include
 completion, ground-truth wall clearance, speeds, reasons, and host planning/control
 timing. CSV and NPZ export do not require Matplotlib.
