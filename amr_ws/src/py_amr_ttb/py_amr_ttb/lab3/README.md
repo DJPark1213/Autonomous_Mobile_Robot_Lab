@@ -108,11 +108,6 @@ The planner walks the resulting path to select a directly clear point within
 it can be the guide itself. The guide influences steering; it does not authorize
 motion or establish that unknown cells are free.
 
-When the objective changes by less than 0.10 m and the previous guide remains
-more than 0.20 m away, a direction change greater than 60 degrees retains that
-previous guide only if its entire straight clearance capsule is still clear.
-Ordinary lookahead advancement continues along the route.
-
 ### 4. Rank executable velocities
 
 Candidates combine forward speeds in 0.05 m/s increments, zero, the current
@@ -133,7 +128,8 @@ progress toward guide
 ```
 
 Heading improvement uses the same initial guide bearing for every candidate.
-Candidates are checked in score order; the first verified stopping trajectory
+An initial sampled-contact filter rejects obvious collisions. Remaining
+candidates are checked in score order; the first verified stopping trajectory
 is selected. Linear and angular commands can be nonzero together.
 
 ### 5. Supervise execution
@@ -149,40 +145,22 @@ at its input snapshot, not when computation finishes. The node also checks
 control duration and evidence expiry before publishing. Python callbacks cannot
 preempt already-running computation or retract the preceding command during it.
 
-## Clearance and bounded recovery
+## Stopping clearance
 
-Normal validation covers each predicted path segment with a midpoint disk whose
-radius is the normal clearance radius plus half the segment length. Both
-obstacle clearance and observed space must pass through the full stopping path.
-Turning commands also pass a second prediction with reduced angular acceleration
-and braking. Linear response is unchanged in that second prediction.
+Validation covers each predicted path segment with a midpoint disk whose radius
+is the configured clearance radius plus half the segment length. Both obstacle
+clearance and observed space must pass through the full stopping path. Turning
+commands also pass a second prediction with reduced angular acceleration and
+braking. Linear response is unchanged in that second prediction.
 
-If normal validation fails, commands with `abs(v) <= 0.08 m/s` and measured
-`abs(v) <= 0.10 m/s` may use a capsule recovery check. It checks obstacles along
-complete segments, allows for curvature, and separately checks visibility over
-the swept physical body. Closing speed toward the nearest surface adds a
-command-latency clearance reserve.
-
-If a hit is already inside the normal margin but outside the physical body,
-recovery must satisfy all of these conditions:
-
-- No physical-body intersection anywhere along the stopping sweep.
-- Clearance to every initially close hit never decreases.
-- Other hits retain the normal clearance and closing-motion reserve.
-- Total predicted travel is at most 0.10 m.
-- Translating recovery improves final nearest clearance by at least 1 mm.
-  Pure rotation may preserve clearance for the circular footprint.
-
-The 0.10 m travel bound applies to escape from an already violated margin.
-Both nominal and slower steering must pass recovery when turning. Unknown space
-still rejects a sweep; recovery is not permission to drive through unseen space.
+The same clearance policy applies at every speed. There is no separate escape
+exception for a robot already inside the clearance margin. If no candidate
+passes, the planner requests zero and reevaluates.
 
 Measured reverse travel is limited to 0.70 m, reset after 0.15 m of forward
-travel. Separately, accumulated absolute turning reaches its budget at `2*pi`
-radians without 0.15 m net displacement from a fixed anchor. That limits stationary
-and small-displacement turns and prioritizes verified translation over holding.
-Changing objectives does not reset either budget. If no candidate passes, the
-robot requests zero and reevaluates; these rules do not guarantee maze escape.
+travel. Changing objectives does not reset that budget. Stationary turns remain
+eligible when their stopping sweeps pass; there is no accumulated rotation
+budget. These local checks do not guarantee maze escape.
 
 ## Shared defaults
 
@@ -229,9 +207,9 @@ ros2 run py_amr_ttb lab3_controller --ros-args \
 | `node.py` | ROS inputs, TF, receipt timing, coverage jobs, publishing and services |
 | `state.py`, `types.py` | Starting-frame pose history and records with frame/time metadata |
 | `geometry.py`, `coverage.py` | Beam validity, transforms and observed-space queries |
-| `planner.py` | Objective selection, progress, detours, reverse and rotation budgets |
+| `planner.py` | Objective selection, progress, detours, reverse budget |
 | `local_planner.py` | Disposable route guide and velocity ranking |
-| `trajectory.py` | Response prediction, normal stopping checks and capsule recovery |
+| `trajectory.py` | Response prediction and shared stopping-sweep validation |
 | `motion.py` | Command ramping and independent current-state validation |
 | `memory.py` | Route samples, failed directions and atomic NPZ persistence |
 | `worker.py` | Planning process and shared simulation engine |
@@ -247,8 +225,8 @@ map-verified route optimization; ambiguous initial alignment reports
 ## Diagnostics
 
 Logs are written under `~/amr_lab3_runs` by default. `NAV_TARGET` reports objective
-changes. `NAV_DIAGNOSTIC` includes input ages, worker duration, candidate rejection
-counts, route guide, selected command, reverse travel, accumulated turning and
+changes. `NAV_DIAGNOSTIC` includes input ages, worker duration, candidate-check
+information, route guide, selected command, reverse travel and supervisor
 clearance details. Failure JSON captures preserve the rejected cycle's state,
 scan, plan, configuration and result alongside the CSV.
 
@@ -263,11 +241,10 @@ scan, plan, configuration and result alongside the CSV.
 | `CONTROL_DEADLINE`, `COMMAND_EXPIRED` | Control computation or evidence exceeded its time allowance |
 | `NO_MOTION_RESPONSE` | Published motion did not produce the expected measured response |
 
-Recovery diagnostics include `initial_clearance`, `minimum_clearance`,
-`escape_gain`, `escape_travel` and `capsule_recovery`. Distances are from the
-robot centre to obstacle evidence; subtract the physical radius for body clearance.
-Use rejection details to distinguish obstacle, visibility and timing failures.
-A published command alone does not prove the robot base accepted or executed it.
+Supervisor diagnostics include requested and ramped commands, measured motion,
+footprint checks and evidence expiry. Use those details to distinguish obstacle,
+visibility and timing failures. A published command alone does not prove the
+robot base accepted or executed it.
 
 ## Simulation and tests
 
@@ -301,7 +278,7 @@ finalists with shifted starts and slower motor response.
 The simulator raycasts LiDAR; the controller does not receive ground-truth walls.
 It uses the navigation engine and supervisor with a separate finite-response
 plant. Reports include completion, minimum wall distance, motion and timing.
-Tests cover input freshness, braking, coverage, recovery, rotation limits,
+Tests cover input freshness, braking, coverage,
 persistence and scenario completion. Simulation does not establish hardware
 performance under ROS delays, sensor noise, wheel slip or contact physics.
 CSV and NPZ export require no Matplotlib. Optional hardware-log plotting:

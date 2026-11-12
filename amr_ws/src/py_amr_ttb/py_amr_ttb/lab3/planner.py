@@ -26,9 +26,6 @@ class Planner:
         self.reverse_travel = 0.
         self.forward_travel = 0.
         self.last_pose = None
-        self.progress_anchor = None
-        self.last_yaw = None
-        self.unproductive_turn = 0.
 
     def observed_segment(self, pose, scan, point):
         distance = math.dist(pose[:2], point)
@@ -50,15 +47,6 @@ class Planner:
                 self.forward_travel += movement
                 if self.forward_travel >= c.progress_distance:
                     self.reverse_travel = 0.
-        # Reset accumulated absolute turning only after net displacement from
-        # the anchor, so changing targets or circling in place cannot reset it.
-        if self.progress_anchor is None or math.dist(state.pose[:2], self.progress_anchor) >= c.progress_distance:
-            self.progress_anchor = state.pose[:2]
-            self.unproductive_turn = 0.
-        elif self.last_yaw is not None:
-            delta = state.pose[2]-self.last_yaw
-            self.unproductive_turn += abs(math.atan2(math.sin(delta), math.cos(delta)))
-        self.last_yaw = state.pose[2]
         self.last_pose = state.pose[:2]
         self.memory.record(pose, now)
         if self.started is None:
@@ -111,11 +99,8 @@ class Planner:
         self.target = Target(tuple(objective), source)
         odom_target = tuple(inverse_points([objective], transform)[0])
         command, details = self.motion.choose(state, scan, odom_target, now,
-                                              allow_reverse=self.reverse_travel < c.backtrack_distance,
-                                              allow_rotation=self.unproductive_turn < 2*math.pi)
-        self.diagnostics = dict(details, objective=source, feedback=motion_reason, blocked=blocked, reverse_travel=self.reverse_travel,
-                                unproductive_turn=self.unproductive_turn,
-                                progress_displacement=math.dist(state.pose[:2], self.progress_anchor))
+                                              allow_reverse=self.reverse_travel < c.backtrack_distance)
+        self.diagnostics = dict(details, objective=source, feedback=motion_reason, blocked=blocked, reverse_travel=self.reverse_travel)
         status = details.get('rejection', 'RUNNING')
         return Plan(self.target, transform, now, status=status,
                     diagnostics=self.diagnostics, command=command)

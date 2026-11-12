@@ -16,16 +16,13 @@ class TrajectoryPlanner:
     def __init__(self, config):
         self.cfg = config
         self.previous = (0., 0.)
-        self.guide_point = None
-        self.guide_objective = None
 
     def guide(self, state, scan, target):
         """Search a bounded, disposable lattice through the current obstacle returns.
 
         Search eight-connected cells without diagonal corner cutting and select
-        a directly clear lookahead point. Retain a clear previous guide across
-        large direction changes while the objective remains nearby. Unknown cells
-        can guide exploration; only observed stopping sweeps authorize movement.
+        a directly clear lookahead point. Unknown cells can guide exploration;
+        only observed stopping sweeps authorize movement.
         """
         spacing = self.cfg.local_spacing
         extent = self.cfg.local_extent
@@ -106,27 +103,13 @@ class TrajectoryPlanner:
             probes = np.linspace(state.pose[:2], target, 30)
             if not len(hits) or np.all(np.linalg.norm(probes[:, None]-hits[None], axis=2) >= self.cfg.radius+.005):
                 selected = target
-        # Retain a still-clear passing direction only across a large route flip.
-        # Let the lookahead advance normally along the same side of an obstacle.
-        if (self.guide_point is not None and self.guide_objective is not None
-                and math.dist(target, self.guide_objective) < .1
-                and math.dist(state.pose[:2], self.guide_point) > .2):
-            old = np.asarray(self.guide_point)-state.pose[:2]
-            new = np.asarray(selected)-state.pose[:2]
-            if np.dot(old, new) < .5*np.linalg.norm(old)*np.linalg.norm(new):
-                from .trajectory import capsule_clearance
-                segment = np.asarray([state.pose[:2], self.guide_point])
-                if not len(hits) or capsule_clearance(segment, hits).min() > self.cfg.radius+.005:
-                    selected = self.guide_point
-        self.guide_point, self.guide_objective = tuple(selected), tuple(target)
         return tuple(selected), path.tolist()
 
-    def choose(self, state, scan, target, now, allow_reverse=True, allow_rotation=True):
+    def choose(self, state, scan, target, now, allow_reverse=True):
         """Rank progress, heading improvement, speed and steering continuity.
 
-        Check candidates in score order with the shared stopping validator.
-        Exhausted rotation budget excludes stationary and small-displacement
-        turns and prioritizes verified translation over holding still.
+        Reject sampled contact, then check candidates in score order with the
+        shared stopping validator. Return zero if no candidate passes.
         """
         c = self.cfg
         objective_distance = math.dist(state.pose[:2], target)
@@ -147,12 +130,10 @@ class TrajectoryPlanner:
                                      [top, -c.reverse_speed] if allow_reverse else [top]))
         for v in speeds:
             for w in steering:
-                if (not allow_rotation and abs(v) < .005 and abs(w) > .01) or abs(v*w) > c.lateral_acceleration:
+                if abs(v*w) > c.lateral_acceleration:
                     continue
                 path = rollout(state, v, w, prediction, max(0., now-scan.received))
                 end = path[-1]
-                if not allow_rotation and abs(w) > .01 and math.dist(end[:2], state.pose[:2]) < .05:
-                    continue
                 progress = distance-math.dist(end[:2], target)
                 # A nearby guide point can fall behind a moving candidate.
                 # Compare all candidates with the same approach direction so
@@ -165,27 +146,18 @@ class TrajectoryPlanner:
                     score -= .12
                 candidates.append((score, float(v), float(w), path))
         attempts = 0
-        rejections = {}
-        last_check = {}
-        # After exhausting rotation, prefer a verified translating escape to a
-        # zero command whose score would otherwise beat every reverse candidate.
-        ranked = sorted(candidates, key=lambda item: (
-            allow_rotation or abs(item[1]) > .005, item[0]), reverse=True)
-        for score, v, w, path in ranked:
+        hits = scan.points
+        for score, v, w, path in sorted(candidates, key=lambda item: item[0], reverse=True):
+            # Reject obvious contact before the more expensive visibility check.
+            positions = inverse_points(np.asarray(path)[:, :2], scan.pose)
+            if len(hits) and np.any(np.linalg.norm(positions[:, None]-hits[None], axis=2) < c.radius):
+                continue
             attempts += 1
-            last_check = {}
-            clear, path = evaluate_trajectory(state, scan, v, w, prediction, now, last_check)
-            if not clear:
-                reason = last_check.get('rejection', 'SLOW_STEERING')
-                rejections[reason] = rejections.get(reason, 0)+1
+            clear, path = evaluate_trajectory(state, scan, v, w, prediction, now)
             if clear:
                 self.previous = (v, w)
                 return (v, w), dict(score=score, candidates=len(candidates), checked=attempts,
                                     predicted_path=path, guide=guide,
-                                    guide_distance=distance, guide_heading=heading,
-                                    clearance=last_check, rejections=rejections,
-                                    rotation_limited=not allow_rotation)
+                                    guide_distance=distance, guide_heading=heading)
         self.previous = (0., 0.)
-        return (0., 0.), dict(rejection='NO_SAFE_TRAJECTORY', checked=attempts,
-                            rejections=rejections, clearance=last_check,
-                            rotation_limited=not allow_rotation)
+        return (0., 0.), dict(rejection='NO_SAFE_TRAJECTORY', checked=attempts)
