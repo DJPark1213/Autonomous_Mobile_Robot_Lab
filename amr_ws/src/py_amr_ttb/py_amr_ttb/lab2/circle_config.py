@@ -11,8 +11,8 @@ class CircleConfig:
     CONTROL_PERIOD = 0.1
     SENSOR_TIMEOUT = 0.5
     NAV_POSITION_TOLERANCE = 0.05
-    NAV_MAX_LINEAR_SPEED = 0.20  # Fixed physical/safety bound, not a trial speed.
-    NAV_MAX_ANGULAR_SPEED = 0.40  # Fixed angular bound (rad/s).
+    NAV_MAX_LINEAR_SPEED = 0.46  # Fixed physical/safety bound, not a trial speed.
+    NAV_MAX_ANGULAR_SPEED = 2.64  # Fixed angular bound (rad/s).
 
     CIRCLE_RADIUS = 0.75
     CIRCLE_TARGET_SPEED = 0.12  # Independent virtual target speed (m/s).

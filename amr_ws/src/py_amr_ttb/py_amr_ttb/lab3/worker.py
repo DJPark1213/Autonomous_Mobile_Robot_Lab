@@ -32,7 +32,6 @@ class Work:
     now: float
     blocked: bool = False
     motion_reason: str = ''
-    feedback_target: tuple | None = None
 
 
 def put_latest(queue, value):
@@ -76,7 +75,7 @@ class NavigationEngine:
     and history in both ROS and simulation.
 
     Own their shared lifecycle. Replay loads a completed route and requires starting
-    alignment; learning creates new map evidence and memory.
+    alignment for map-backed recordings; learning records route-only memory.
     """
 
     def __init__(self, config):
@@ -124,7 +123,7 @@ class NavigationEngine:
             self.mapper.update(work.scan, work.state.covariance)
             self.last_map = work.now
         plan = self.planner.step(work.state, work.scan, self.mapper, work.now, work.blocked,
-                                 work.motion_reason, work.feedback_target)
+                                 work.motion_reason)
         plan.diagnostics = dict(plan.diagnostics, worker_seconds=time.perf_counter()-started)
         if self.mapper is not None:
             plan.diagnostics.update(

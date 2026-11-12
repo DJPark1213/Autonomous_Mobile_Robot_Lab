@@ -51,7 +51,27 @@ def course(name):
                          ((2., .6), (.65, .6))], (3.4, 0.)
     if name == 'corner':
         return boundary+[((1.1, -2.), (1.1, .7)), ((1.1, .7), (2.3, .7))], (3.4, 0.)
+    if name in ('diamond40', 'diamond42', 'extruded_wall42'):
+        return passage_course('diamond' if name.startswith('diamond') else 'extruded_wall',
+                              width=.40 if name == 'diamond40' else .42)
     raise ValueError(name)
+
+
+def passage_course(obstacle='empty', width=.42, offset=-.25):
+    """Hold the passage offset fixed while varying width and obstruction."""
+    if obstacle not in ('empty', 'diamond', 'extruded_wall') or width <= 0:
+        raise ValueError('invalid passage scenario')
+    lo, hi = offset-width/2, offset+width/2
+    walls = [((-.5, -1.), (2.5, -1.)), ((-.5, 1.), (2.5, 1.)),
+             ((2.5, -1.), (2.5, lo)), ((2.5, hi), (2.5, 1.)),
+             ((2.5, lo), (4.3, lo)), ((2.5, hi), (4.3, hi))]
+    if obstacle == 'diamond':
+        vertices = [(.8, 0.), (1.3, .5), (1.8, 0.), (1.3, -.5)]
+        walls += [(vertices[i], vertices[(i+1) % 4]) for i in range(4)]
+    elif obstacle == 'extruded_wall':
+        walls += [((1., -1.), (1., .25)), ((1., .25), (1.35, .25)),
+                  ((1.35, .25), (1.35, -1.))]
+    return walls, (3.8, offset)
 
 
 def raycast(walls, pose, count=360, maximum=6.):
@@ -125,9 +145,8 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
     scan = plan = None
     blocked = False
     motion_reason = ''
-    feedback_target = None
     reasons, modes = Counter(), Counter()
-    samples, durations = [], []
+    samples, durations, control_durations = [], [], []
     minimum, peak = math.inf, 0.
     done = False
     for tick in range(int(seconds/config.control_period)):
@@ -138,13 +157,14 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
                                 config, pose=pose, stamp=now, received=now, sequence=tick)
         if tick % max(1, round(config.map_period/config.control_period)) == 0:
             began = time.perf_counter()
-            plan = engine.step(Work(state, scan, now, blocked, motion_reason, feedback_target))
+            plan = engine.step(Work(state, scan, now, blocked, motion_reason))
             durations.append(time.perf_counter()-began)
         target = plan.target if plan else None
+        began = time.perf_counter()
         result = motion.step_plan(state, scan, plan, now, config.control_period)
+        control_durations.append(time.perf_counter()-began)
         blocked = result.blocked
         motion_reason = result.reason
-        feedback_target = target.key if target else None
         reasons[result.reason] += 1
         modes[target.mode if target else 'NONE'] += 1
         samples.append((now, *pose, v, w, result.v, result.w))
@@ -159,6 +179,7 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
     return dict(scenario=name, completed=done, elapsed=now, distance_to_goal=math.dist(pose[:2], goal),
                 minimum_clearance=minimum, peak_speed=peak, reasons=dict(reasons), modes=dict(modes),
                 worker_ms_p95=float(np.percentile(durations, 95)*1000),
+                control_ms_p95=float(np.percentile(control_durations, 95)*1000),
                 samples=samples, engine=engine)
 
 
@@ -170,7 +191,9 @@ def main(args=None):
     and optionally export CSV/NPZ files. Incomplete runs exit with failure.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner', 'corridor', 'staggered'), default='obstacle')
+    parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner',
+                        'corridor', 'staggered', 'diamond40', 'diamond42', 'extruded_wall42'),
+                        default='obstacle')
     parser.add_argument('--seconds', type=float, default=90.)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--two-runs', action='store_true')
@@ -192,7 +215,9 @@ def main(args=None):
             for index, report in enumerate(reports, 1):
                 np.savetxt(options.output/f'run{index}.csv', report['samples'], delimiter=',',
                            header='time,x,y,yaw,measured_v,measured_w,command_v,command_w', comments='')
-                report['engine'].memory.save(options.output/f'run{index}.npz', report['engine'].mapper.grid)
+                engine = report['engine']
+                engine.memory.save(options.output/f'run{index}.npz',
+                                   engine.mapper.grid if engine.mapper is not None else None)
         if not all(report['completed'] for report in reports):
             raise SystemExit(1)
 

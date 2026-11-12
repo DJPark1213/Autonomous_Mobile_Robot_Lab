@@ -77,7 +77,7 @@ def rollout(state, v_command, w_command, config, age=0.0):
     return poses
 
 
-def evaluate_trajectory(state, scan, v, w, config, now, diagnostics=None):
+def _evaluate_response(state, scan, v, w, config, now, diagnostics=None):
     """Obstacles can lie between predicted positions or along the
     later braking path, not just at a command's endpoint.
 
@@ -112,38 +112,22 @@ def evaluate_trajectory(state, scan, v, w, config, now, diagnostics=None):
     return is_clear, trajectory
 
 
+def evaluate_trajectory(state, scan, v, w, config, now, diagnostics=None):
+    """Require nominal and slower steering responses to leave stopping clearance.
 
-def command_candidates(state, preferred_v, preferred_w, config, dt):
-    """Yield the preferred command, then nearby reachable speed/steering pairs.
-
-    Rank alternatives by tracking the preferred motion and limiting changes from
-    measured velocity. Every alternative respects one-cycle acceleration/braking
-    limits and keeps the requested travel direction.
+    The second response uses angular_response_fraction (0.75 by default).
+    It protects turns against moderate tracking lag, without treating the nominal
+    path as the only possible motion. Hardware limits still need calibration.
     """
-    yield preferred_v, preferred_w
-    braking_v = approach(state.v, 0., config.linear_acceleration, config.linear_braking, dt)
-    speeds = (preferred_v, (preferred_v+braking_v)/2, braking_v)
-    steering = [preferred_w]
-    for desired_w in (0., -config.max_angular, config.max_angular):
-        steering.append(approach(state.w, desired_w,
-                                 config.angular_acceleration, config.angular_braking, dt))
-    alternatives = set()
-    for v in speeds:
-        for w in steering:
-            if (v, w) == (preferred_v, preferred_w) or abs(v) <= .004:
-                continue
-            if not -config.reverse_speed <= v <= config.max_linear or abs(w) > config.max_angular:
-                continue
-            if v*preferred_v < 0 or abs(v*w) > config.lateral_acceleration:
-                continue
-            alternatives.add((v, w))
-
-    def cost(command):
-        v, w = command
-        tracking = ((v-preferred_v)/config.max_linear)**2
-        tracking += ((w-preferred_w)/config.max_angular)**2
-        continuity = ((v-state.v)/config.max_linear)**2
-        continuity += ((w-state.w)/config.max_angular)**2
-        return tracking + .2*continuity, abs(w), w, v
-
-    yield from sorted(alternatives, key=cost)
+    clear, trajectory = _evaluate_response(state, scan, v, w, config, now, diagnostics)
+    if not clear or abs(w)+abs(state.w) < .01:
+        return clear, trajectory
+    slower = replace(config, angular_acceleration=config.angular_acceleration*config.angular_response_fraction,
+                     angular_braking=config.angular_braking*config.angular_response_fraction)
+    details = {}
+    robust, _ = _evaluate_response(state, scan, v, w, slower, now, details)
+    if diagnostics is not None:
+        diagnostics['slower_steering_clear'] = robust
+        if not robust:
+            diagnostics['slower_steering_rejection'] = details
+    return robust, trajectory

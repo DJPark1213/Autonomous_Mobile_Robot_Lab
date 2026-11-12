@@ -80,31 +80,10 @@ class RobotState:
 
 @dataclass
 class Target:
-    """The same destination needs different steering when approaching a
-    wall, backing out or braking at the final goal.
-
-    The planner supplies point in the map frame; the controller adapter converts it
-    to odometry. mode selects the behavior, reverse permits backward recovery, and
-    wall_side is +1 left or -1 right. score ranks candidate targets.
-    """
+    """A persistent objective in the plan's coordinate frame."""
 
     point: tuple
-    mode: str = 'FIRST_RUN'
-    score: float = 0.0
-    reverse: bool = False
-    wall_side: int = 0
-
-    @property
-    def key(self):
-        return tuple(self.point), self.mode, self.reverse
-
-    def arrival_distance(self, default):
-        if self.mode in ('RECOVERY_REVERSE', 'RECOVERY_ADVANCE'):
-            return min(default, .025)
-        if self.mode in ('FORWARD_CORRECTION', 'FOLLOW_WALL'):
-            return min(default, .05)
-        return min(default, .025) if self.mode == 'APPROACH' else default
-
+    mode: str = 'GOAL'
 
 @dataclass
 class MotionResult:
@@ -126,18 +105,16 @@ class MotionResult:
 
 @dataclass
 class Plan:
-    """A map correction made after target selection could send the
-    robot toward the wrong odometry location if target and transform were read
-    separately.
+    """Keep the selected objective and executable command in one snapshot.
 
-    Keep the map-frame target with transform, which locates starting odometry in the
-    map; control uses its inverse. created uses monotonic time for expiry. status
-    and diagnostics explain the decision.
+    transform locates starting odometry in the target's frame for telemetry.
+    command is (linear m/s, angular rad/s); None authorizes no movement.
+    created uses the input's monotonic time so computation cannot renew old evidence.
     """
 
     target: Target | None
     transform: tuple
     created: float
-    map_revision: int = 0
     status: str = 'RUNNING'
     diagnostics: dict = field(default_factory=dict)
+    command: tuple | None = None

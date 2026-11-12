@@ -110,7 +110,7 @@ class Lab2Circle(Node):
                         successful=False, reason=parameter.name + ' must be finite and nonnegative')
                 if parameter.name == 'robot_speed' and value > self.config.NAV_MAX_LINEAR_SPEED:
                     return SetParametersResult(
-                        successful=False, reason='robot_speed exceeds the 0.20 m/s hardware bound')
+                        successful=False, reason=f'robot_speed exceeds the {self.config.NAV_MAX_LINEAR_SPEED:.2f} m/s bound')
         return SetParametersResult(successful=True)
 
     def odom_callback(self, message):

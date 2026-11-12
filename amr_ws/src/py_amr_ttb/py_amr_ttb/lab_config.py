@@ -127,10 +127,8 @@ class Lab3Config:
     goal_tolerance: float = 0.12
     # Command limits and calibrated response govern the predicted stopping path.
 
-    # ==================== TUNE 1/5: DRIVING SPEED ====================
     # Forward speed cap (m/s); raise gradually after braking checks.
     max_linear: float = 0.30
-    # ===============================================================
 
     max_angular: float = 1.4
     reverse_speed: float = 0.08
@@ -146,7 +144,6 @@ class Lab3Config:
     # Keep command checks frequent while bounding slower map/decision work.
     control_period: float = 0.05
     map_period: float = 0.20
-    decision_period: float = 0.50
     # Stale observations or decisions must expire rather than authorize motion.
     sensor_timeout: float = 0.40
     plan_timeout: float = 1.50
@@ -158,59 +155,22 @@ class Lab3Config:
     scan_known_fraction: float = 0.75
     # Bound how far pose_at may extrapolate to place a laser measurement in time.
     pose_sync_tolerance: float = 0.12
-    # Sample all around the robot while limiting candidate evaluation cost.
-    front_sections: int = 4
-    rear_sections: int = 4
-    heading_samples: int = 9
-    # Look beyond a target, retaining clearance reserve before choosing it.
-    scoring_horizon: float = 1.5
-    target_distance: float = 1.0
-    target_min_distance: float = 0.15
-    target_reserve: float = 0.06
-    target_reached: float = 0.18
-    # Balance progress and usable space against turns and repeated failures.
-    weight_goal: float = 0.40
-
-    # ==================== TUNE 2/5: USABLE TRAVEL ====================
-    # Higher favors directions with longer observed, usable travel.
-    weight_travel: float = 0.30
-    # ===============================================================
-
-    weight_clearance: float = 0.10
-
-    # ==================== TUNE 3/5: FEWER TURNS ======================
-    # Higher discourages large changes in heading.
-    weight_heading: float = 0.10
-    # ===============================================================
-
-    # ==================== TUNE 4/5: STEADIER ROTATION ================
-    # Higher discourages changes from measured angular velocity.
-    weight_rotation: float = 0.10
-    # ===============================================================
-
-    weight_history: float = 0.35
-    # Steer toward targets; large heading errors require alignment before travel.
-
-    # ==================== TUNE 5/5: STEERING RESPONSE ===============
-    # Lower for zigzagging; higher for sluggish steering.
+    # Bound scan-local route search and acceleration-aware trajectory sampling.
+    local_extent: float = 2.4
+    local_spacing: float = 0.05
+    local_lookahead: float = 0.65
+    trajectory_horizon: float = 0.70
+    angular_response_fraction: float = 0.75
     heading_gain: float = 2.0
-    # ===============================================================
-
-    rotate_threshold: float = 1.0
-    alignment_tolerance: float = 0.15
-    angular_settle_speed: float = 0.15
-    minimum_translation_speed: float = 0.01  # Provisional floor for the slower candidate.
-    # Detect unproductive motion and choose a reachable earlier point to recover.
+    # Bound saved-route lookahead during replay.
+    target_distance: float = 1.0
+    # Detect unproductive motion and bound measured reverse travel.
     stall_timeout: float = 3.0
     progress_distance: float = 0.15
     backtrack_distance: float = 0.70
     # Remember failures locally, with decay so a direction can become useful again.
     attempt_radius: float = 0.45
     history_decay: float = 90.0
-    # Recognize loops without mistaking nearby consecutive samples for revisits.
-    revisit_window: float = 12.0
-    revisit_min_age: float = 8.0
-    revisit_radius: float = 0.20
     # Retain route detail for replay and reserve extra room for shortcut checks.
     route_spacing: float = 0.10
     route_margin: float = 0.10
@@ -244,9 +204,8 @@ class Lab3Config:
     alignment_position_noise: float = 0.04
     alignment_heading_noise: float = 0.04
     innovation_limit: float = 11.34
-    # Replay needs a wider initial match; pocket searches also have a fixed budget.
+    # Replay needs a wider initial match.
     replay_start_search: float = 0.30
-    local_search_cells: int = 2500
 
     def __post_init__(self):
         """Reject incompatible settings before mapping or motion starts using them.
@@ -261,12 +220,11 @@ class Lab3Config:
         for field in fields(self):
             value = getattr(self, field.name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                zero_allowed = field.name.startswith('weight_') or field.name in nonnegative
+                zero_allowed = field.name in nonnegative
                 invalid = value < 0 if zero_allowed else value <= 0
                 if not math.isfinite(value) or (field.name not in signed and invalid):
                     raise ValueError(f'{field.name} must be finite and positive')
-        for name in ('front_sections', 'rear_sections', 'heading_samples',
-                     'alignment_min_hits', 'local_search_cells'):
+        for name in ('alignment_min_hits',):
             if not isinstance(getattr(self, name), int):
                 raise ValueError(f'{name} must be an integer')
         if self.run_mode not in ('learn', 'replay'):
@@ -281,21 +239,15 @@ class Lab3Config:
             raise ValueError('Invalid observation thresholds')
         if self.control_period * 2 > self.sensor_timeout:
             raise ValueError('sensor_timeout must span at least two control cycles')
-        if self.target_min_distance >= self.target_distance:
-            raise ValueError('Invalid target distance')
-        if self.target_reached + .05 >= self.target_distance:
-            raise ValueError('target_distance must exceed target_reached by more than 0.05 m')
-        if self.alignment_tolerance >= self.rotate_threshold:
-            raise ValueError('Invalid alignment limits')
-        if self.revisit_min_age >= self.revisit_window:
-            raise ValueError('revisit_min_age must be less than revisit_window')
+        if not .04 <= self.local_spacing <= .1 or (2*math.ceil(self.local_extent/self.local_spacing)+1)**2 > 12000:
+            raise ValueError('Local search exceeds its sampling budget')
+        if self.local_lookahead >= self.local_extent or not 0 < self.angular_response_fraction <= 1:
+            raise ValueError('Invalid local lookahead or response fraction')
         if self.prediction_step > self.control_period:
             raise ValueError('prediction_step must not exceed control_period')
         if not (self.grid_origin_x <= self.goal_x < self.grid_origin_x+self.grid_width
                 and self.grid_origin_y <= self.goal_y < self.grid_origin_y+self.grid_height):
             raise ValueError('Goal must be inside configured map bounds')
-        if self.front_sections+self.rear_sections > 32 or not 2 <= self.heading_samples <= 33:
-            raise ValueError('Section sampling exceeds the bounded planning budget')
         if self.grid_resolution > .10 or self.grid_width*self.grid_height/self.grid_resolution**2 > 1000000:
             raise ValueError('Grid must resolve gaps and fit the one-million-cell budget')
 

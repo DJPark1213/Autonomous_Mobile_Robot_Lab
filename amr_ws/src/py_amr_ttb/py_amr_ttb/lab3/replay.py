@@ -1,14 +1,11 @@
 """The first successful run may contain exploration loops and slow
 corners that need not be repeated.
 
-Use saved map evidence to verify shortcuts and rounded corners, then anticipate bend
-speeds. Current scan checks still govern actual motion.
+Use saved map evidence to verify shortcuts and rounded corners, then follow the route with live trajectory checks.
 """
 
 import math
 import numpy as np
-
-from py_amr_ttb.odom_utils import normalize_angle
 
 
 def route_time(points, config):
@@ -111,29 +108,3 @@ def optimize_route(route, grid, config):
             smooth.append(tuple(b))
     smooth.append(result[-1])
     return np.asarray(smooth)
-
-
-def speed_profile(route, config):
-    """Waiting until a bend or the final waypoint to reduce speed may
-    leave too little distance to brake.
-
-    Set curvature-based m/s limits, then propagate braking constraints backward from
-    bends and a zero-speed endpoint. Return one cap per route point; control may
-    reduce it further.
-    """
-    route = np.asarray(route)
-    speeds = np.full(len(route), config.max_linear)
-    lengths = np.linalg.norm(np.diff(route, axis=0), axis=1)
-    for i in range(1, len(route)-1):
-        a, b = route[i]-route[i-1], route[i+1]-route[i]
-        angle = abs(normalize_angle(math.atan2(b[1], b[0])-math.atan2(a[1], a[0])))
-        curvature = angle/max(.02, (lengths[i-1]+lengths[i])/2)
-        if curvature > 1e-6:
-            speeds[i] = min(speeds[i], config.max_angular/curvature,
-                            math.sqrt(config.lateral_acceleration/curvature))
-    speeds[-1] = 0.
-    # Work backward so each earlier cap leaves enough distance to reach the
-    # following speed, including the final stop, under the braking model.
-    for i in range(len(route)-2, -1, -1):
-        speeds[i] = min(speeds[i], math.sqrt(speeds[i+1]**2+2*config.linear_braking*lengths[i]))
-    return speeds

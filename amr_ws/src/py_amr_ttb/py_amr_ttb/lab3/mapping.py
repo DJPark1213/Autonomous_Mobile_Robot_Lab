@@ -5,7 +5,6 @@ Accumulate observed free/occupied evidence for route queries and use local scan
 matching to improve placement before insertion.
 """
 
-from collections import deque
 import math
 import numpy as np
 
@@ -167,61 +166,6 @@ class OccupancyMap:
                     if not np.all(region & (evidence <= self.cfg.free_threshold)):
                         return False
         return True
-
-    def closed_ahead(self, position, heading):
-        """A direction may offer nearby free space but lead into an
-        observed capped pocket that cannot continue toward the goal.
-
-        Find a wall-to-wall gate and flood-fill the free region beyond it using map
-        position and heading. Return True only when a qualifying pocket is
-        exhausted. Unknown boundaries, missing gates or the search budget return
-        False, meaning unresolved rather than proven open.
-        """
-        blocked, free = self.layers()
-        forward = np.array([math.cos(heading), math.sin(heading)])
-        lateral = np.array([-forward[1], forward[0]])
-        entrance = np.asarray(position)+.10*forward
-        anchors = []
-        for sign in (-1, 1):
-            anchor = None
-            for d in np.arange(0, 1.51, self.resolution):
-                cell = self.cell(entrance+sign*d*lateral)
-                if not self.inside(cell):
-                    return False
-                x, y = cell
-                if blocked[y, x]:
-                    anchor = cell
-                    break
-                if not free[y, x]:
-                    return False
-            if anchor is None:
-                return False
-            anchors.append(anchor)
-        gate = set(grid_line(*anchors))
-        # Temporarily close the entrance so flood fill tests only the region
-        # ahead; otherwise it could escape backward into already explored space.
-        seed = self.cell(entrance+.15*forward)
-        if not self.inside(seed) or not free[seed[1], seed[0]] or seed in gate:
-            return False
-        queue, visited = deque([seed]), {seed}
-        while queue:
-            if len(visited) >= self.cfg.local_search_cells:
-                return False
-            x, y = queue.popleft()
-            for cell in ((x+1, y), (x-1, y), (x, y+1), (x, y-1)):
-                if cell in gate or cell in visited:
-                    continue
-                if not self.inside(cell):
-                    return False
-                cx, cy = cell
-                if blocked[cy, cx]:
-                    continue
-                if not free[cy, cx]:
-                    # Lack of observation cannot prove that a pocket is sealed.
-                    return False
-                visited.add(cell)
-                queue.append(cell)
-        return len(visited) >= 4
 
     def align(self, scan, predicted, initial=False):
         """Odometry drift can shift new scan hits away from walls

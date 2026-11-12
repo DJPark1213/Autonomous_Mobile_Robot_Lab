@@ -22,7 +22,7 @@ ros2 launch py_amr_ttb lab2_circle.launch.py target_speed:=0.10 robot_speed:=0.1
 | Parameter | Default | Meaning |
 | --- | --- | --- |
 | target_speed | 0.12 | Goal speed along its circle, m/s; nonnegative |
-| robot_speed | 0.12 | Independent follower forward speed limit, 0 to 0.20 m/s |
+| robot_speed | 0.12 | Independent follower forward speed limit, 0 to 0.46 m/s |
 | radius | 0.75 | Goal circle radius, m |
 | lookahead | 0.30 | Initial goal chord lead, m; between 0 and 2*radius |
 | direction | 1 | +1 counterclockwise, -1 clockwise |

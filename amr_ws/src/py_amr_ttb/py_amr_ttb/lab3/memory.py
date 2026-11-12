@@ -19,7 +19,7 @@ from .mapping import OccupancyMap
 
 
 class RunMemory:
-    """Recovery needs reachable earlier positions, and replay needs a
+    """Detour selection needs failed directions, and replay needs a
     record of the completed run.
 
     Route rows are [x, y, yaw, time]; attempt rows are [x, y, heading, count, time].
@@ -72,22 +72,6 @@ class RunMemory:
             age = math.exp(-max(0., now-stamp)/self.cfg.history_decay)
             result += space*angle*count*age
         return min(3., result)
-
-    def return_target(self, position, segment_clear):
-        """A previously visited position may offer a way out, but going
-        directly toward it could cut through a wall.
-
-        Verify observed segments to recent route points within backtrack_distance.
-        Return the farthest of up to 20 qualifying candidates, or None.
-        """
-        candidates = []
-        for point in reversed(self.route[:-1]):
-            distance = math.dist(position, point[:2])
-            if .2 <= distance <= self.cfg.backtrack_distance and segment_clear(position, point[:2]):
-                candidates.append((distance, tuple(point[:2])))
-            if len(candidates) >= 20:
-                break
-        return max(candidates)[1] if candidates else None
 
     def save(self, path, grid, transform=(0., 0., 0.)):
         """An interrupted save must not replace a usable learned run
