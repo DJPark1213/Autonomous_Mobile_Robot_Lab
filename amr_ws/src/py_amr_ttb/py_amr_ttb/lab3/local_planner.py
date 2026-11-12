@@ -128,17 +128,19 @@ class TrajectoryPlanner:
                 path = rollout(state, v, w, prediction, max(0., now-scan.received))
                 end = path[-1]
                 progress = distance-math.dist(end[:2], target)
-                end_bearing = math.atan2(target[1]-end[1], target[0]-end[0])
-                alignment = abs(heading)-abs(normalize_angle(end_bearing-end[2]))
+                # A nearby guide point can fall behind a moving candidate.
+                # Compare all candidates with the same approach direction so
+                # passing that point does not reward turning back toward it.
+                alignment = abs(heading)-abs(normalize_angle(bearing-end[2]))
                 score = progress+.18*alignment+.08*v-.015*abs(w-self.previous[1])
                 if v < 0:
                     score -= .12
                 candidates.append((score, float(v), float(w), path))
         attempts = 0
+        hits = scan.points
         for score, v, w, path in sorted(candidates, key=lambda item: item[0], reverse=True):
             # Reject obvious contact before the more expensive visibility check.
             positions = inverse_points(np.asarray(path)[:, :2], scan.pose)
-            hits = scan.points
             if len(hits) and np.any(np.linalg.norm(positions[:, None]-hits[None], axis=2) < c.radius):
                 continue
             attempts += 1
@@ -146,6 +148,7 @@ class TrajectoryPlanner:
             if clear:
                 self.previous = (v, w)
                 return (v, w), dict(score=score, candidates=len(candidates), checked=attempts,
-                                    predicted_path=path, guide=guide)
+                                    predicted_path=path, guide=guide,
+                                    guide_distance=distance, guide_heading=heading)
         self.previous = (0., 0.)
         return (0., 0.), dict(rejection='NO_SAFE_TRAJECTORY', checked=attempts)

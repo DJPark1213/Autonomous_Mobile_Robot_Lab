@@ -25,7 +25,7 @@ def approach(current, desired, acceleration, braking, dt):
     slowing_down = abs(desired) < abs(current)
     rate_limit = braking if reversing or slowing_down else acceleration
     maximum_change = rate_limit * dt
-    change = float(np.clip(desired - current, -maximum_change, maximum_change))
+    change = max(-maximum_change, min(desired-current, maximum_change))
     next_speed = current + change
 
     if reversing and current * next_speed < 0:

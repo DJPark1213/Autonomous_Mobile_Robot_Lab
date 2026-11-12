@@ -331,6 +331,25 @@ class StateAndMotionTests(unittest.TestCase):
         self.assertTrue(evaluate_trajectory(state, sensor, *command,
                         replace(self.cfg, prediction_horizon=.7), 0.)[0])
 
+    def test_nearby_guide_does_not_turn_moving_robot_back(self):
+        from py_amr_ttb.lab3.local_planner import TrajectoryPlanner
+        state = RobotState((0., 0., 0.), .3, 0., 0., 0.)
+        planner = TrajectoryPlanner(self.cfg)
+        planner.previous = (.3, 0.)
+        with patch.object(planner, 'guide', return_value=((.3, 0.), [[0., 0.], [.3, 0.], [2., 0.]])):
+            command, _ = planner.choose(state, scan(self.cfg), (2., 0.), 0.)
+        self.assertGreaterEqual(command[0], .29)
+        self.assertAlmostEqual(command[1], 0.)
+
+    def test_parallel_close_wall_allows_fast_straight_travel(self):
+        from py_amr_ttb.lab3.local_planner import TrajectoryPlanner
+        state = RobotState((0., 0., 0.), .3, 0., 0., 0.)
+        walls = [((-.5, -.23), (4., -.23)), ((-.5, .23), (4., .23))]
+        sensor = scan(self.cfg, raycast(walls, state.pose))
+        command, _ = TrajectoryPlanner(self.cfg).choose(state, sensor, (3., 0.), 0.)
+        self.assertAlmostEqual(command[0], self.cfg.max_linear)
+        self.assertAlmostEqual(command[1], 0.)
+
     def test_slower_steering_rejects_nominally_clear_turn(self):
         from py_amr_ttb.lab3.trajectory import evaluate_trajectory
         state = RobotState((0., 0., 0.), .25, 0., 0., 0.)

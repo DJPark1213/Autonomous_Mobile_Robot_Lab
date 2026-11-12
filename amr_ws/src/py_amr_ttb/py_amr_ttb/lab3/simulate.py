@@ -35,6 +35,8 @@ def course(name):
 
     Return repeatable wall segments and a goal in metres for the selected scenario.
     """
+    if name in ('photo_slalom', 'photo_switchback'):
+        return photo_course(name)
     boundary = rectangle(-1., -2., 5., 2.)
     if name == 'straight':
         return boundary, (3., 0.)
@@ -55,6 +57,44 @@ def course(name):
         return passage_course('diamond' if name.startswith('diamond') else 'extruded_wall',
                               width=.40 if name == 'diamond40' else .42)
     raise ValueError(name)
+
+
+
+def photo_course(name):
+    """Approximate the two photographed cardboard courses in metres.
+
+    Start at (0, 0), facing +x toward the far end of the photographs.
+    Dimensions and start/goal locations are assumed, pending room measurements.
+    Floor tape is guidance for the human operator and supplies no obstacle returns.
+    """
+    if name == 'photo_slalom':
+        outlines = [
+            [(-.5, 1.05), (1.2, 1.05), (2.6, .95), (4.2, .8), (5.8, .85)],
+            [(-.5, -1.05), (1.1, -.95), (2.6, -.9), (4.1, -.8), (5.8, -.85)],
+            [(1.9, .25), (2.35, .35), (2.2, -.15), (1.9, .25)],
+            [(3.65, -.25), (4.25, -.35), (4.45, .2), (3.9, .4), (3.65, -.25)],
+            [(5.8, -.85), (5.8, -.35)],
+            [(5.8, .35), (5.8, .85)],
+        ]
+        goal = (6.1, 0.)
+    elif name == 'photo_switchback':
+        outlines = [
+            [(-.5, -1.05), (-.5, 1.05), (.6, 1.05), (1.7, 1.5),
+             (2.8, 1.1), (3.9, .6), (5., .95), (6.3, .8)],
+            [(-.5, -1.05), (.6, -1.05), (1.7, -.6), (2.8, -1.),
+             (3.9, -1.5), (5., -.95), (6.3, -.8)],
+            [(.85, .2), (1.2, .65), (1.55, .2), (1.2, -.25), (.85, .2)],
+            [(2.25, -.2), (2.6, .25), (2.95, -.2), (2.6, -.65), (2.25, -.2)],
+            [(3.5, -.45), (3.85, -.05), (4.2, -.45), (3.85, -.85), (3.5, -.45)],
+            [(4.8, -.25), (5.3, -.3), (5.45, .15), (5., .3), (4.8, -.25)],
+            [(6.3, -.8), (6.3, -.35)],
+            [(6.3, .35), (6.3, .8)],
+        ]
+        goal = (6.6, 0.)
+    else:
+        raise ValueError(name)
+    walls = [(a, b) for outline in outlines for a, b in zip(outline, outline[1:])]
+    return walls, goal
 
 
 def passage_course(obstacle='empty', width=.42, offset=-.25):
@@ -194,7 +234,8 @@ def main(args=None):
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner',
-                        'corridor', 'staggered', 'diamond40', 'diamond42', 'extruded_wall42'),
+                        'corridor', 'staggered', 'diamond40', 'diamond42', 'extruded_wall42',
+                        'photo_slalom', 'photo_switchback'),
                         default='obstacle')
     parser.add_argument('--seconds', type=float, default=90.)
     parser.add_argument('--output', type=Path)

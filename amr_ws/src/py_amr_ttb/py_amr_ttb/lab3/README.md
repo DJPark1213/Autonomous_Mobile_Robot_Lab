@@ -33,7 +33,10 @@ flowchart LR
    Unknown space can suggest a route to investigate, but cannot authorize motion.
 3. **Choose an executable motion.** Sample forward, stationary, and limited
    reverse velocities with several steering rates. Rank predicted progress,
-   alignment, forward speed, and continuity of steering. The prediction begins
+   alignment, forward speed, and continuity of steering. Alignment uses the same
+   current-to-guide bearing for every candidate, including those that pass the
+   guide point. Diagnostics include `guide_distance` and `guide_heading` (radians).
+   The prediction begins
    with measured velocity, includes acceleration and command latency, and ends
    after braking to rest. Only trajectories with observed, clear swept footprints
    are eligible. Check nominal steering and a second, slower response.
