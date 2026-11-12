@@ -54,18 +54,50 @@ asynchronously. Shutdown requests zero velocity and asks the worker to save.
 
 ```mermaid
 flowchart TD
-  S[Odometry and LiDAR] --> N[Validate frames and pair acquisition poses]
+  S[Odometry and LiDAR] --> N[node.py: validate frames, poses and freshness]
   N --> C[Prepare recent observed-space evidence]
-  C --> W[Planning worker: latest snapshot]
-  W --> O[Goal, replay waypoint or detour]
-  O --> G[Scan-local route guide]
-  G --> V[Rank velocities and verify stopping sweeps]
-  V --> M[Control tick: ramp and recheck current state]
-  C --> M
-  M --> P[Publish cmd_vel]
-  W --> R[Route memory and persistence]
+  C --> W[Latest snapshot to worker: about every 0.20 s]
+  subgraph Planning[Planning worker]
+    W --> O[planner.py: choose goal, replay waypoint or detour]
+    O --> G[local_planner.py: search grid and select nearby guide]
+    G --> V[Generate and score speed / turning candidates]
+    V --> T[trajectory.py: verify candidates in score order]
+    T --> Q{Any candidate safe?}
+    Q -->|Yes| B[Plan with selected velocity]
+    Q -->|No| Z[Plan with zero velocity]
+  end
+  B --> M
+  Z --> M
+  C --> M[motion.py: control tick about every 0.05 s]
+  M --> F{Fresh inputs and plan?}
+  F -->|Yes| A[Ramp command using acceleration limits]
+  A --> E[trajectory.py: recheck stopping sweep from current state]
+  E --> H{Safe?}
+  H -->|Yes| P[Publish ramped cmd_vel]
+  H -->|No| STOP[Request zero velocity]
+  F -->|No| STOP
+  O --> R[Record route and failed directions]
   M --> L[Telemetry and failure captures]
 ```
+
+### Who decides what?
+
+| Module | Question it answers | Output |
+| --- | --- | --- |
+| `planner.py`: `Planner.step()` | What should the robot move toward? | A goal, replay waypoint or detour, packaged with the local planner's command in a `Plan` |
+| `local_planner.py`: `TrajectoryPlanner.choose()` | Which movement makes progress toward that objective and passes prediction checks? | One linear/angular velocity pair `(v, w)`, or zero if no candidate passes |
+| `motion.py`: `MotionController.step_plan()` | Can the selected movement still be executed safely using current sensing? | A ramped velocity command, or a zero request |
+
+The **objective** may be several metres away. The **guide** is a nearby point
+used to steer toward that objective around local obstacles. The **command** is
+a linear speed `v` in m/s and angular speed `w` in rad/s. A guide can change on
+every planning update without changing the objective. A detour changes the
+objective itself after persistent lack of progress.
+
+Planning submissions normally occur every 0.20 s; control ticks target 0.05 s.
+The worker handles the latest available snapshot asynchronously. Control can
+reuse a plan while it remains fresh, but rechecks its execution each tick.
+These periods are scheduling targets, not execution-time guarantees.
 
 ### 1. Validate sensing and freshness
 
@@ -97,16 +129,42 @@ Reaching the goal tolerance completes the run; `max_runtime` ends an unfinished 
 
 ### 3. Select a scan-local guide
 
-Each planning update builds a disposable lattice spanning 4.8 m at 5 cm spacing.
-Current obstacle returns are inflated by the configured clearance radius plus
-0.15 grid cells. An eight-neighbour search forbids diagonal corner cutting.
-It searches toward the objective, retaining the reachable cell closest to it
-when the destination cannot be reached.
+`TrajectoryPlanner.guide()` converts the objective into a nearby steering
+point in five steps:
 
-The planner walks the resulting path to select a directly clear point within
-`local_lookahead` (0.78 m). If the objective is close enough and directly clear,
-it can be the guide itself. The guide influences steering; it does not authorize
-motion or establish that unknown cells are free.
+1. **Build a temporary grid.** The lattice spans about 4.8 m, with cells 5 cm
+   apart, centred on the robot's position rounded to the grid. Obstacle returns
+   and grid cells are expressed in the same odometry frame. The lattice is
+   rebuilt each update; default learning does not retain it as a global map.
+2. **Expand obstacles.** Cells within the clearance radius plus 0.15 grid cells
+   of an obstacle return are blocked. Planning for the robot's centre then
+   accounts approximately for its body clearance. With the defaults, this
+   inflation radius is 0.1975 m. The start cell is explicitly made available to
+   seed the search; this does not waive the later motion-clearance checks.
+3. **Search toward the objective.** An A*-style search ranks cells by path
+   length so far plus straight-line distance to the objective. It permits eight
+   neighbours, charges diagonal moves their longer distance, and forbids
+   diagonal moves between blocked corners. Its destination is the unblocked
+   grid cell closest to the objective, including when the objective is outside
+   the grid. If that destination is unreachable, it retains the reachable cell
+   closest to the objective and reconstructs a path to it.
+4. **Walk the path to choose a guide.** Starting with the first path step, the
+   planner advances through points within `local_lookahead` (0.78 m measured
+   directly from the robot). Each line from the robot to a candidate point is
+   sampled about every 2.5 cm and checked against obstacle returns with clearance
+   radius plus 0.005 m. It stops advancing at the first out-of-range or blocked
+   point. This prevents aiming straight through a corner merely because the
+   grid path bends around it. The first path step is the fallback; if the search
+   produces fewer than two points, the objective is returned as the fallback.
+5. **Use the objective directly when appropriate.** If it is within lookahead,
+   the search reaches a cell within one grid spacing of it, and its direct line
+   passes the obstacle check, the objective itself becomes the guide.
+
+The grid initially treats cells without nearby obstacle returns as available,
+including unknown space. Its `free` array therefore means available for this
+search, not confirmed empty by LiDAR. The guide influences candidate ranking;
+it never authorizes motion. Observed space and the full stopping sweep must
+still pass the trajectory validator, including for fallback guides.
 
 ### 4. Rank executable velocities
 
@@ -115,6 +173,11 @@ forward cap and an allowed reverse speed. Steering candidates include 0.35 rad/s
 increments, the angular limits, heading correction and previous selected steering.
 The planner limits `abs(v * w)` by the lateral-acceleration setting and reduces
 the forward cap near the objective using braking distance.
+
+For example, `(v, w) = (0.25, 0.70)` requests forward motion while turning
+left. A zero linear speed with nonzero angular speed requests rotation in place;
+negative linear speed requests reversing. The planner evaluates combinations,
+so steering and forward motion can occur together.
 
 Each candidate starts at measured velocity, includes command latency plus scan
 receipt age, accelerates toward the command, then brakes to rest. Its score is:
@@ -128,9 +191,12 @@ progress toward guide
 ```
 
 Heading improvement uses the same initial guide bearing for every candidate.
-An initial sampled-contact filter rejects obvious collisions. Remaining
-candidates are checked in score order; the first verified stopping trajectory
-is selected. Linear and angular commands can be nonzero together.
+
+A high score alone cannot select a command. Candidates are checked in descending
+score order: an inexpensive obstacle-contact filter first rejects obvious
+collisions, then the shared validator checks clearance and observed space along
+the stopping sweep. The first candidate that passes is returned. If none passes,
+the result is `(0, 0)` with `NO_SAFE_TRAJECTORY`.
 
 ### 5. Supervise execution
 
@@ -139,6 +205,20 @@ command toward the selected command, and validates its stopping sweep against
 current sensing and measured velocity. It does not select another route.
 Rejected commands request zero velocity. A zero request is not an instantaneous
 physical stop; the prediction includes braking motion.
+
+The local planner checks a requested command using its planning snapshot. The
+supervisor checks the ramped command using the current state, which may differ
+because the robot has moved or a newer scan has arrived. Both use the shared
+`trajectory.py` validation logic. The supervisor does not try the planner's
+second-best candidate if execution fails; it requests zero and leaves movement
+selection to a later planning update.
+
+For example, a wall blocks the final goal. `planner.py` keeps the goal as the
+objective; `local_planner.py` finds a guide near the wall's opening and selects a
+forward-left curve. `motion.py` ramps toward that command and verifies its
+stopping sweep. If a new scan reveals an obstacle in the curve, the supervisor
+requests zero. The next planning update can choose another movement. Only
+persistent lack of objective progress causes `planner.py` to select a detour.
 
 Worker queues hold only the latest pending work and result. A plan's age starts
 at its input snapshot, not when computation finishes. The node also checks
