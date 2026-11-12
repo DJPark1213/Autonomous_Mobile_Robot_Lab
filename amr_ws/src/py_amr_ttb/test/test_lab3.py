@@ -23,7 +23,7 @@ from py_amr_ttb.lab3.geometry import (
 from py_amr_ttb.lab3.mapping import OccupancyMap
 from py_amr_ttb.lab3.memory import RunMemory
 from py_amr_ttb.lab3.motion import MotionController
-from py_amr_ttb.lab3.trajectory import rollout, approach
+from py_amr_ttb.lab3.trajectory import rollout, approach, evaluate_trajectory, capsule_clearance
 from py_amr_ttb.lab3.replay import optimize_route
 from py_amr_ttb.lab3.simulate import simulate, raycast, course, plant, wall_distance
 from py_amr_ttb.lab3.state import StateTracker, PoseEstimator
@@ -620,6 +620,69 @@ class MappingAndReplayTests(unittest.TestCase):
             self.assertEqual(process.exitcode, 0)
             self.assertEqual(Path(config.run_file).read_bytes(), original)
             self.assertTrue(Path(directory, 'run.incomplete.npz').is_file())
+
+
+class ClearanceRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = Lab3Config()
+        self.state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+
+    def wall_scan(self, walls):
+        return scan(self.cfg, raycast(walls, self.state.pose))
+
+    def test_parallel_wall_does_not_need_sideways_travel_padding(self):
+        observed = self.wall_scan([((-.8, .191), (2., .191))])
+        clear, _ = evaluate_trajectory(self.state, observed, .08, 0., self.cfg, 0.)
+        self.assertTrue(clear)
+
+    def test_margin_escape_increases_clearance_but_toward_wall_stops(self):
+        observed = self.wall_scan([((.185, -.8), (.185, .8))])
+        details = {}
+        clear, _ = evaluate_trajectory(self.state, observed, -.05, 0., self.cfg, 0., details)
+        self.assertTrue(clear)
+        self.assertTrue(details['margin_escape'])
+        self.assertGreater(details['escape_gain'], .001)
+        self.assertFalse(evaluate_trajectory(self.state, observed, .05, 0., self.cfg, 0.)[0])
+        self.assertFalse(evaluate_trajectory(self.state, observed, -.2, 0., self.cfg, 0.)[0])
+
+    def test_escape_cannot_use_unknown_rear_space(self):
+        observed = self.wall_scan([((.185, -.8), (.185, .8))])
+        observed.known[np.abs(observed.angles) > 1.5] = False
+        self.assertFalse(evaluate_trajectory(self.state, observed, -.05, 0., self.cfg, 0.)[0])
+
+    def test_escape_does_not_approach_opposing_obstacle(self):
+        observed = self.wall_scan([((.185, -.8), (.185, .8)), ((-.195, -.8), (-.195, .8))])
+        self.assertFalse(evaluate_trajectory(self.state, observed, -.05, 0., self.cfg, 0.)[0])
+
+    def test_body_overlap_never_authorizes_escape(self):
+        observed = self.wall_scan([((.175, -.8), (.175, .8))])
+        self.assertFalse(evaluate_trajectory(self.state, observed, -.05, 0., self.cfg, 0.)[0])
+
+    def test_capsule_detects_hit_between_samples(self):
+        distances = capsule_clearance(np.array([[0.,0.],[1.,0.]]), np.array([[.5,.1]]))
+        self.assertAlmostEqual(float(distances[0,0]), .1)
+
+    def test_exhausted_rotation_prefers_clear_escape_over_holding(self):
+        from py_amr_ttb.lab3.local_planner import TrajectoryPlanner
+        observed = self.wall_scan([((.185, -.8), (.185, .8))])
+        command, details = TrajectoryPlanner(self.cfg).choose(
+            self.state, observed, (1., 0.), 0., allow_rotation=False)
+        self.assertLess(command[0], 0.)
+        self.assertTrue(details['clearance']['margin_escape'])
+        self.assertTrue(details['rotation_limited'])
+
+    def test_turn_budget_survives_objective_changes(self):
+        from py_amr_ttb.lab3.planner import Planner
+        planner = Planner(self.cfg, RunMemory(self.cfg))
+        observed = scan(self.cfg)
+        with patch.object(planner.motion, 'choose', return_value=((0.,0.), {})) as choose:
+            for i in range(16):
+                state = replace(self.state, pose=(0.,0.,i*.45))
+                planner.detour = (1., .1*i)
+                planner.step(state, observed, None, i*.2)
+            self.assertFalse(choose.call_args.kwargs['allow_rotation'])
+            planner.step(replace(state, pose=(.2,0.,3.6)), observed, None, 2.)
+            self.assertTrue(choose.call_args.kwargs['allow_rotation'])
 
 
 class CourseTests(unittest.TestCase):

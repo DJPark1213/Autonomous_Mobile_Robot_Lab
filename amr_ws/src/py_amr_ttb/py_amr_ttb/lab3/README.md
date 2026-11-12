@@ -2,128 +2,10 @@
 
 [Repository overview](../../../../../README.md) · [Workspace quick start](../../../../README.md)
 
-Go-to-goal uses LiDAR and odometry to reach a configured goal and record the
-route. The default goal is (10, 0) metres relative to the starting odometry
-frame. Replay follows a completed recording from the same starting pose.
-
-## Decision loop
-
-```mermaid
-flowchart LR
-  S[LiDAR and odometry] --> N[node.py: sensor snapshot]
-  N --> W[worker.py: latest snapshot]
-  W --> P[planner.py: persistent objective]
-  P --> L[local_planner.py: route guide and velocity candidates]
-  L --> V[trajectory.py: observed stopping sweeps]
-  V --> C[motion.py: current-state safety check]
-  N --> C
-  C --> O[cmd_vel]
-  P <--> M[memory.py: route and failed directions]
-  C --> T[telemetry.py: CSV and failure captures]
-```
-
-1. **Keep one objective.** Use the goal, a saved replay waypoint, or a temporary
-   detour. Small score changes do not replace the objective. After five seconds
-   without a 5 cm reduction in objective distance, record the failed direction
-   and try an observed detour. Reaching the detour returns to the goal.
-2. **Find a local route around visible obstacles.** Build a disposable lattice
-   from the latest scan, search around the inflated obstacle returns, and select
-   a nearby visible route point. The lattice covers 4.8 m square at 5 cm spacing.
-   It is discarded each update; learning builds no persistent occupancy map.
-   Unknown space can suggest a route to investigate, but cannot authorize motion.
-3. **Choose an executable motion.** Sample forward, stationary, and limited
-   reverse velocities with several steering rates. Rank predicted progress,
-   alignment, forward speed, and continuity of steering. Alignment uses the same
-   current-to-guide bearing for every candidate, including those that pass the
-   guide point. Diagnostics include `guide_distance` and `guide_heading` (radians).
-   The prediction begins
-   with measured velocity, includes acceleration and command latency, and ends
-   after braking to rest. Only trajectories with observed, clear swept footprints
-   are eligible. Check nominal steering and a second, slower response.
-4. **Execute through an independent supervisor.** Every control tick, ramp toward
-   the chosen command and recheck its stopping sweep using current sensing and
-   measured motion. A failed check requests zero; the supervisor never chooses
-   a competing route. Turning and forward motion can occur together.
-
-Cumulative measured reverse travel is limited to `backtrack_distance` (0.70 m).
-At least `progress_distance` (0.15 m) of forward travel resets that budget.
-The run ends at the goal tolerance or `max_runtime`; no local method guarantees
-escape from every maze or visibility configuration.
-
-## Timing and geometry
-
-| Item | Default |
-| --- | --- |
-| Control tick | 0.05 s |
-| Worker submission interval (`map_period`) | 0.20 s |
-| Sensor receipt timeout | 0.40 s |
-| Command-plan lifetime | Smaller of `plan_timeout` and two worker intervals: 0.40 s |
-| Candidate horizon / supervisor horizon | 0.70 s / 0.50 s, each followed by braking |
-| Prediction sampling | 0.05 s, with enlarged midpoint footprints between samples |
-| Local guide lookahead | 0.78 m |
-| Forward / reverse speed caps | 0.46 / 0.08 m/s |
-| Angular speed cap | 2.46 rad/s |
-| Physical radius / clearance allowance | 0.18 / 0.01 m |
-| Trajectory alignment / speed / steering-change weights | 0.08 / 0.08 / 0.015 |
-
-`trajectory_alignment_weight`, `trajectory_speed_weight`, and
-`trajectory_steering_weight` control candidate ranking. They multiply heading
-improvement, signed forward speed, and absolute steering change respectively;
-route progress has unit weight. These nonnegative weights do not relax the
-stopping-sweep or observed-space checks.
-
-Both Lab 3 launch files use these shared `Lab3Config` defaults for learning and
-replay. No tuning arguments are needed for the standard launch commands.
-
-These are scheduling targets and model assumptions, not measured hardware
-performance. The circular collision radius is 0.19 m. A nominally wide enough
-opening still needs a clear approach and stopping sweep.
-
-Linear acceleration/braking defaults are 0.4/0.5 m/s²; angular defaults are
-1.8/2.2 rad/s². `angular_response_fraction=0.75` checks another trajectory with
-reduced angular acceleration and braking. Two sampled responses do not cover
-every possible motor response; calibration remains necessary.
-
-Sensor freshness uses **local monotonic receipt time**. Robot timestamps still
-align scans, odometry and TF. A constant PC-to-robot clock offset needs no SSH
-measurement or NTP synchronization. Receipt time cannot detect transport delay
-that happened before delivery.
-
-Coverage preparation uses one background job and up to six recent scans.
-Pose-aligned free-space evidence expires with the sensor timeout. Current and
-recent obstacle hits override free space. A small invalid-beam gap can be
-inferred only when bracketed by valid beams: at most 4 degrees, limited by the
-shorter bracketing range, its chord, and 0.50 m from the laser. Wider unknown
-regions remain unverified. NumPy is the numerical dependency for navigation.
-
-The worker has bounded latest-work queues. Plan age starts at the input snapshot,
-not completion of the calculation. Before publishing, the node checks elapsed
-control time and evidence expiry. A slow callback requests `CONTROL_DEADLINE`;
-expired evidence requests `COMMAND_EXPIRED`. Python callbacks cannot preempt
-already-running work or retract a previous command during that work.
-
-## Modules
-
-| File | Responsibility |
-| --- | --- |
-| `node.py` | ROS subscriptions, frames, sensor validation, background coverage, worker lifecycle, publishing and services |
-| `state.py` | Starting odometry frame, signed measured velocity, acquisition-pose interpolation and replay pose filter |
-| `geometry.py` | Scan validity, transforms, observed-space and footprint checks |
-| `planner.py` | Goal/replay/detour ownership, progress tracking and reverse budget |
-| `local_planner.py` | Bounded scan-local route search and velocity candidate ranking |
-| `trajectory.py` | Acceleration/braking prediction and shared stopping-sweep validation |
-| `motion.py` | Command ramping, expiry and independent current-state validation |
-| `memory.py` | Route samples, local failed-direction penalties and atomic NPZ persistence |
-| `mapping.py`, `replay.py` | Compatibility with map-backed recordings, alignment and verified route optimization |
-| `worker.py` | Planning/persistence process; the same engine is used in simulation |
-| `telemetry.py` | Bounded asynchronous CSV and failure JSON writing |
-| `simulate.py`, `plot.py` | Repeatable closed-loop scenarios and optional plotting |
-
-Route-only replay advances monotonically through the saved route and checks
-shortcuts against current LiDAR. It uses the same live motion planner and safety
-checks as learning. Replay is not guaranteed to be faster when the first run
-already takes an efficient route. Map-backed recordings additionally require
-initial alignment and retain their mapping support.
+Lab 3 drives toward a goal using odometry and LiDAR, records the travelled route,
+and can replay a completed recording. The default goal is `(10, 0)` metres in
+starting odometry. Learning uses a temporary scan-local lattice, not a persistent
+occupancy map. Replay uses the same live trajectory planner and motion checks.
 
 ## Build and run
 
@@ -133,25 +15,30 @@ From the repository's `amr_ws` directory on the ROS machine:
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install --packages-select py_amr_ttb
 source install/setup.bash
-ros2 launch py_amr_ttb lab3_go_to_goal.launch.py robot_namespace:=/TTB10
+ros2 launch py_amr_ttb lab3_go_to_goal.launch.py
 ```
 
-The launch drives once valid sensors and a plan arrive. Use one active velocity
-controller. Topics are `/TTB10/odom`, `/TTB10/scan`, and `/TTB10/cmd_vel`. The
-odometry twist's child frame must match `base_frame`, and laser TF must describe
-a horizontal scan plane. An inverted laser is supported.
+The default namespace is `/TTB10`; `robot_namespace:=/TTB10` is optional.
+Use `robot_namespace:=/OTHER_ROBOT` to select another robot. Both launches remap
+TF topics to that namespace. The default topics are `/TTB10/odom`,
+`/TTB10/scan`, and `/TTB10/cmd_vel`.
 
-After a completed first run, stop the process and return the robot to its original
-position and heading:
+The controller starts driving when its inputs and plan are ready. Use one active
+velocity controller. Odometry's twist child frame must match `base_frame`
+(default `base_link`), and laser TF must describe a horizontal scan plane.
+Upright and inverted horizontal laser mounting are supported.
+
+After a completed learning run, stop the process and return the robot to the
+same starting position and heading:
 
 ```bash
-ros2 launch py_amr_ttb lab3_replay.launch.py robot_namespace:=/TTB10
+ros2 launch py_amr_ttb lab3_replay.launch.py
 ```
 
 Both launches accept `run_file:=/absolute/path/course.npz`. The default is
-`~/amr_lab3_runs/course.npz`. Completed learning saves that file; incomplete runs
-save `course.incomplete.npz`; replay saves `course.replay.npz`. A map-backed
-recording can report `ALIGNMENT_REQUIRED` when its starting pose is ambiguous.
+`~/amr_lab3_runs/course.npz`. Learning saves completed runs there and unfinished
+runs to `course.incomplete.npz`. Replay writes `course.replay.npz` without
+replacing the learned recording. Replay requires a completed route.
 
 ```bash
 ros2 service call /lab3_controller/stop std_srvs/srv/Trigger '{}'
@@ -159,65 +46,265 @@ ros2 service call /lab3_controller/save std_srvs/srv/Trigger '{}'
 ros2 service call /lab3_controller/reset std_srvs/srv/Trigger '{}'
 ```
 
-Stop latches stopped and queues a save. Reset requires stop and stationary
-odometry, then captures a new starting frame. Save is asynchronous. Shutdown
-requests zero velocity and asks the worker to persist its latest state.
+Stop latches the controller stopped and queues a save. Reset requires a stopped
+run and stationary odometry, then establishes a new starting frame. Save runs
+asynchronously. Shutdown requests zero velocity and asks the worker to save.
 
-`Lab3Config` fields are ROS startup parameters. Restart to apply changes:
+## Navigation loop
+
+```mermaid
+flowchart TD
+  S[Odometry and LiDAR] --> N[Validate frames and pair acquisition poses]
+  N --> C[Prepare recent observed-space evidence]
+  C --> W[Planning worker: latest snapshot]
+  W --> O[Goal, replay waypoint or detour]
+  O --> G[Scan-local route guide]
+  G --> V[Rank velocities and verify stopping sweeps]
+  V --> M[Control tick: ramp and recheck current state]
+  C --> M
+  M --> P[Publish cmd_vel]
+  W --> R[Route memory and persistence]
+  M --> L[Telemetry and failure captures]
+```
+
+### 1. Validate sensing and freshness
+
+Odometry establishes a fixed starting frame and supplies signed measured speeds.
+Sensor timestamps pair each scan with its acquisition pose and TF. Freshness is
+measured with **local monotonic receipt time**; a constant PC-to-robot clock offset
+needs no SSH measurement or NTP synchronization. Robot-side timestamps must still
+be usable for pose interpolation and TF. Receipt timing cannot detect delay that
+occurred before a message arrived.
+
+One background coverage job prepares up to six recent, pose-aligned scans.
+Evidence expires with the sensor timeout. Obstacle returns override free-space
+evidence. Invalid beams remain unknown except for bounded near-field gaps:
+bracketing valid beams must be within 4 degrees, and inferred coverage is limited
+by their shorter range, connecting chord and 0.50 m from the laser.
+
+### 2. Maintain an objective
+
+The planner owns one goal, replay waypoint or temporary detour. Replay advances
+through route samples and checks shortcuts against current sensing within its
+1 m waypoint lookahead.
+
+A reduction of more than 5 cm in objective distance records progress. After
+`stall_timeout + 2` seconds without progress (5 seconds by default), the planner
+records a failed direction and ranks observed detours by available travel,
+distance to the goal and recent failure penalties. A detour clears when reached
+within 0.20 m. Learning then returns to the goal; replay resumes route selection.
+Reaching the goal tolerance completes the run; `max_runtime` ends an unfinished run.
+
+### 3. Select a scan-local guide
+
+Each planning update builds a disposable lattice spanning 4.8 m at 5 cm spacing.
+Current obstacle returns are inflated by the configured clearance radius plus
+0.15 grid cells. An eight-neighbour search forbids diagonal corner cutting.
+It searches toward the objective, retaining the reachable cell closest to it
+when the destination cannot be reached.
+
+The planner walks the resulting path to select a directly clear point within
+`local_lookahead` (0.78 m). If the objective is close enough and directly clear,
+it can be the guide itself. The guide influences steering; it does not authorize
+motion or establish that unknown cells are free.
+
+When the objective changes by less than 0.10 m and the previous guide remains
+more than 0.20 m away, a direction change greater than 60 degrees retains that
+previous guide only if its entire straight clearance capsule is still clear.
+Ordinary lookahead advancement continues along the route.
+
+### 4. Rank executable velocities
+
+Candidates combine forward speeds in 0.05 m/s increments, zero, the current
+forward cap and an allowed reverse speed. Steering candidates include 0.35 rad/s
+increments, the angular limits, heading correction and previous selected steering.
+The planner limits `abs(v * w)` by the lateral-acceleration setting and reduces
+the forward cap near the objective using braking distance.
+
+Each candidate starts at measured velocity, includes command latency plus scan
+receipt age, accelerates toward the command, then brakes to rest. Its score is:
+
+```text
+progress toward guide
++ alignment_weight * heading improvement
++ speed_weight * signed linear speed
+- steering_weight * change in angular command
+- 0.12 when reversing
+```
+
+Heading improvement uses the same initial guide bearing for every candidate.
+Candidates are checked in score order; the first verified stopping trajectory
+is selected. Linear and angular commands can be nonzero together.
+
+### 5. Supervise execution
+
+The control callback checks sensor and plan age, ramps the previous published
+command toward the selected command, and validates its stopping sweep against
+current sensing and measured velocity. It does not select another route.
+Rejected commands request zero velocity. A zero request is not an instantaneous
+physical stop; the prediction includes braking motion.
+
+Worker queues hold only the latest pending work and result. A plan's age starts
+at its input snapshot, not when computation finishes. The node also checks
+control duration and evidence expiry before publishing. Python callbacks cannot
+preempt already-running computation or retract the preceding command during it.
+
+## Clearance and bounded recovery
+
+Normal validation covers each predicted path segment with a midpoint disk whose
+radius is the normal clearance radius plus half the segment length. Both
+obstacle clearance and observed space must pass through the full stopping path.
+Turning commands also pass a second prediction with reduced angular acceleration
+and braking. Linear response is unchanged in that second prediction.
+
+If normal validation fails, commands with `abs(v) <= 0.08 m/s` and measured
+`abs(v) <= 0.10 m/s` may use a capsule recovery check. It checks obstacles along
+complete segments, allows for curvature, and separately checks visibility over
+the swept physical body. Closing speed toward the nearest surface adds a
+command-latency clearance reserve.
+
+If a hit is already inside the normal margin but outside the physical body,
+recovery must satisfy all of these conditions:
+
+- No physical-body intersection anywhere along the stopping sweep.
+- Clearance to every initially close hit never decreases.
+- Other hits retain the normal clearance and closing-motion reserve.
+- Total predicted travel is at most 0.10 m.
+- Translating recovery improves final nearest clearance by at least 1 mm.
+  Pure rotation may preserve clearance for the circular footprint.
+
+The 0.10 m travel bound applies to escape from an already violated margin.
+Both nominal and slower steering must pass recovery when turning. Unknown space
+still rejects a sweep; recovery is not permission to drive through unseen space.
+
+Measured reverse travel is limited to 0.70 m, reset after 0.15 m of forward
+travel. Separately, accumulated absolute turning reaches its budget at `2*pi`
+radians without 0.15 m net displacement from a fixed anchor. That limits stationary
+and small-displacement turns and prioritizes verified translation over holding.
+Changing objectives does not reset either budget. If no candidate passes, the
+robot requests zero and reevaluates; these rules do not guarantee maze escape.
+
+## Shared defaults
+
+Both launch files use `Lab3Config` for learning and replay.
+
+| Setting | Default |
+| --- | --- |
+| Goal / tolerance | (10, 0) m / 0.12 m |
+| Control period / worker submission interval | 0.05 / 0.20 s |
+| Sensor receipt timeout | 0.40 s |
+| Plan lifetime | `min(plan_timeout, 2 * map_period)` = 0.40 s |
+| Candidate / supervisor command horizon | 0.70 / 0.50 s, followed by braking |
+| Prediction step / command latency | 0.05 / 0.10 s |
+| Forward / reverse limit | 0.46 / 0.08 m/s |
+| Angular limit | 2.46 rad/s |
+| Linear acceleration / braking | 0.40 / 0.50 m/s² |
+| Angular acceleration / braking | 1.80 / 2.20 rad/s² |
+| Slower steering response fraction | 0.75 |
+| Lateral acceleration limit | 0.35 m/s² |
+| Physical radius / safety margin | 0.18 / 0.01 m |
+| Normal clearance radius | 0.19 m |
+| Local guide lookahead | 0.78 m |
+| Alignment / speed / steering-change weights | 0.08 / 0.08 / 0.015 |
+| Maximum run duration | 300 s |
+
+Timing values are scheduling targets, not measured execution times. The footprint
+is circular, so opening width alone does not establish a clear approach or
+stopping path. Two steering predictions sample model uncertainty; they do not
+cover every hardware response.
+
+Config fields are ROS startup parameters. Restart to apply changes. For direct
+node execution, remap TF as the launch files do:
 
 ```bash
 ros2 run py_amr_ttb lab3_controller --ros-args \
-  -p robot_namespace:=/TTB10 -p goal_x:=10.0 -p max_linear:=0.46
+  -p robot_namespace:=/TTB10 -p goal_x:=10.0 \
+  -r /tf:=/TTB10/tf -r /tf_static:=/TTB10/tf_static
 ```
 
-## Diagnostics and tests
+## Files and recordings
 
-`NAV_TARGET` reports objective changes. `NAV_DIAGNOSTIC` records sensor and plan
-ages, objective, candidate count, predicted path, route guide, worker duration,
-reverse travel, and footprint rejection details. `NO_SAFE_TRAJECTORY` means no
-candidate passed planning; `TRAJECTORY_BLOCKED` means the supervisor rejected
-execution. Both have failure captures alongside the CSV, together with invalid
-commands, sensor stops and control overruns. Captures retain the rejected cycle's
-state, scan, plan, timing, configuration and result.
+| File | Responsibility |
+| --- | --- |
+| `node.py` | ROS inputs, TF, receipt timing, coverage jobs, publishing and services |
+| `state.py`, `types.py` | Starting-frame pose history and records with frame/time metadata |
+| `geometry.py`, `coverage.py` | Beam validity, transforms and observed-space queries |
+| `planner.py` | Objective selection, progress, detours, reverse and rotation budgets |
+| `local_planner.py` | Disposable route guide and velocity ranking |
+| `trajectory.py` | Response prediction, normal stopping checks and capsule recovery |
+| `motion.py` | Command ramping and independent current-state validation |
+| `memory.py` | Route samples, failed directions and atomic NPZ persistence |
+| `worker.py` | Planning process and shared simulation engine |
+| `mapping.py`, `replay.py` | Alignment and route optimization for map-backed recordings |
+| `telemetry.py` | Bounded asynchronous CSV and failure JSON writing |
+| `simulate.py`, `plot.py` | Closed-loop scenarios and log plotting |
 
-From the repository root, with Python 3.10+ and NumPy:
+Route-only recordings use live sensing to verify replay shortcuts. Recordings
+that contain an occupancy map additionally use alignment, map updates and
+map-verified route optimization; ambiguous initial alignment reports
+`ALIGNMENT_REQUIRED`. That path is separate from default route-only learning.
+
+## Diagnostics
+
+Logs are written under `~/amr_lab3_runs` by default. `NAV_TARGET` reports objective
+changes. `NAV_DIAGNOSTIC` includes input ages, worker duration, candidate rejection
+counts, route guide, selected command, reverse travel, accumulated turning and
+clearance details. Failure JSON captures preserve the rejected cycle's state,
+scan, plan, configuration and result alongside the CSV.
+
+| Reason | Meaning |
+| --- | --- |
+| `WAITING_FOR_SENSORS` | Required sensor state is not ready |
+| `WAITING_FOR_COVERAGE` | Prepared observed-space evidence is not ready |
+| `WAITING_FOR_FRESH_PLAN` | No plan is available within its lifetime |
+| `NO_SAFE_TRAJECTORY` | No sampled candidate passed planning checks |
+| `PLANNER_HOLD` | Planner selected a zero command |
+| `TRAJECTORY_BLOCKED` | Current-state supervisor rejected execution |
+| `CONTROL_DEADLINE`, `COMMAND_EXPIRED` | Control computation or evidence exceeded its time allowance |
+| `NO_MOTION_RESPONSE` | Published motion did not produce the expected measured response |
+
+Recovery diagnostics include `initial_clearance`, `minimum_clearance`,
+`escape_gain`, `escape_travel` and `capsule_recovery`. Distances are from the
+robot centre to obstacle evidence; subtract the physical radius for body clearance.
+Use rejection details to distinguish obstacle, visibility and timing failures.
+A published command alone does not prove the robot base accepted or executed it.
+
+## Simulation and tests
+
+From the repository root with Python 3.10+ and NumPy:
 
 ```bash
 python3 -m unittest discover -s amr_ws/src/py_amr_ttb/test -p test_lab3.py -v
 PYTHONPATH=amr_ws/src/py_amr_ttb python3 -m py_amr_ttb.lab3.simulate \
-  --scenario diamond42 --seconds 45 --output output/lab3-diamond42
+  --scenario example_course --two-runs --output output/lab3-example
 PYTHONPATH=amr_ws/src/py_amr_ttb python3 -m py_amr_ttb.lab3.simulate \
-  --scenario pocket --two-runs --output output/lab3-pocket
+  --scenario diamond42 --seconds 45 --output output/lab3-diamond42
 ```
 
-Scenarios include `straight`, `obstacle`, `corner`, `pocket`, `corridor`,
-`staggered`, `diamond40`, `diamond42`, and `extruded_wall42`. The photo approximations
-are `photo_slalom` and `photo_switchback`. `example_course` approximates the
-approved angular black-line checkpoint drawing (1033 by 1523 pixels), with an
-assumed 4 mm/pixel scale, entering from the bottom and finishing near the top.
-Connected wall boundaries and the separate upper island follow that outline.
-The fixture is not a surveyed map; checkpoint guides are not obstacles.
-For tuning comparisons, weight `example_course` at 65%, the two earlier photo
-courses at 10% each, and the four generated mazes at 3.75% each. These are benchmark
-weights, not controller inputs; a better average does not excuse a collision or
-failure to finish. Compare elapsed time (50%), integrated absolute rotation (25%)
-and total absolute linear-speed variation (25%), normalized to the same baseline
-on each course. Validate finalists with shifted starts and slower motor response.
-Four additional mixed-obstacle courses
-are `maze_s_bend`, `maze_chicane`, `maze_offset_gate`, and `maze_double_bend`;
-these combine diamond islands, wall protrusions and bending corridors. Passage tests hold
-the entrance offset fixed while varying obstacle shape or width. Reports include
-completion, ground-truth wall clearance, speeds, reasons, and host planning/control
-timing. CSV and NPZ export do not require Matplotlib.
+Fixtures include `straight`, `obstacle`, `corner`, `pocket`, `corridor`,
+`staggered`, `diamond40`, `diamond42`, `extruded_wall42`, `photo_slalom`,
+`photo_switchback`, `maze_s_bend`, `maze_chicane`, `maze_offset_gate`,
+`maze_double_bend` and `example_course`.
 
-Tests check freshness, unknown-space rejection, braking and slower steering,
-worker lifecycle, persistence, course completion and clearance. Diamond tests
-also prohibit reverse motion and stationary turning. Replay completion tests
-allow at most 10% timing overhead relative to learning; they do not assert a
-universal speedup. The independent simulated plant has finite motor response,
-but does not model ROS scheduling, sensor noise, wheel slip or contact physics.
+`example_course` follows the angular black-line checkpoint drawing at an assumed
+4 mm/pixel scale. It enters at the bottom and finishes near the top, with connected
+wall protrusions and a separate upper island. Checkpoint lines are not obstacles.
+Photo fixtures and this drawing are approximations, not surveyed geometry.
 
-Optional Matplotlib hardware-log plotting:
+For parameter comparisons, the benchmark weights are 65% for `example_course`,
+10% for each photo course and 3.75% for each generated maze. Compare normalized
+elapsed time (50%), integrated absolute rotation (25%) and total absolute linear
+speed variation (25%). These weights are evaluation choices, not controller
+inputs. Check completion and clearance before comparing efficiency, and repeat
+finalists with shifted starts and slower motor response.
+
+The simulator raycasts LiDAR; the controller does not receive ground-truth walls.
+It uses the navigation engine and supervisor with a separate finite-response
+plant. Reports include completion, minimum wall distance, motion and timing.
+Tests cover input freshness, braking, coverage, recovery, rotation limits,
+persistence and scenario completion. Simulation does not establish hardware
+performance under ROS delays, sensor noise, wheel slip or contact physics.
+CSV and NPZ export require no Matplotlib. Optional hardware-log plotting:
 
 ```bash
 ros2 run py_amr_ttb lab3_plot ~/amr_lab3_runs/learn-TIMESTAMP.csv

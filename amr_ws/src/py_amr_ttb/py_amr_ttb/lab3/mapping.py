@@ -1,8 +1,9 @@
 """One scan cannot describe previously visited corridors or distinguish
 an unexplored region from a known dead end.
 
-Accumulate observed free/occupied evidence for route queries and use local scan
-matching to improve placement before insertion.
+For map-backed replay recordings, accumulate free/occupied evidence and use scan
+matching to improve placement before insertion. Route-only learning and replay
+do not instantiate this mapper.
 """
 
 import math

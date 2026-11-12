@@ -1,7 +1,9 @@
 """The first successful run may contain exploration loops and slow
 corners that need not be repeated.
 
-Use saved map evidence to verify shortcuts and rounded corners, then follow the route with live trajectory checks.
+Optimize map-backed recordings using saved evidence to verify shortcuts and
+rounded corners. Route-only replay selects live-scan shortcuts in Planner and
+does not call this optimizer.
 """
 
 import math

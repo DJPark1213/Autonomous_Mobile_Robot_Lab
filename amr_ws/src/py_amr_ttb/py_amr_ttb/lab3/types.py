@@ -90,9 +90,10 @@ class MotionResult:
     """Planning needs to know when control could not follow a target,
     and logs need the reason for a slowdown or stop.
 
-    v and w are commands in m/s and rad/s; reason explains them and blocked requests
-    reconsideration. trajectory stores predicted poses when evaluated. Defaults
-    request zero velocity.
+    v and w are commands in m/s and rad/s; reason and blocked describe the control
+    result for feedback and diagnostics. They do not directly replace the planner's
+    objective. trajectory stores predicted poses when evaluated. Defaults request
+    zero velocity.
     """
 
     v: float = 0.0

@@ -1,8 +1,8 @@
 """A scan placed at the wrong robot pose can turn a stationary wall
-into a shifted obstacle in the map.
+into a shifted obstacle in the local scene.
 
 StateTracker matches scan times to starting-frame odometry. PoseEstimator separately
-applies accepted local scan corrections to reduce placement drift.
+applies accepted scan corrections for map-backed replay.
 """
 
 from collections import deque
@@ -20,7 +20,7 @@ class StateTracker:
 
     Keep starting-frame measurements for interpolation. Reject frame changes,
     backward timestamps and implausible jumps rather than silently relocating an
-    existing map.
+    existing route and scan history.
     """
 
     def __init__(self, config):
@@ -35,7 +35,7 @@ class StateTracker:
 
     def update(self, pose, v, w, stamp, received, frame='odom', covariance=()):
         """An odometry reset or frame jump would otherwise move the
-        robot relative to every previously mapped obstacle and goal.
+        robot relative to the goal, recorded route and previous scans.
 
         Validate continuity and retain a RobotState in the fixed starting frame.
         pose uses the named odometry frame; measured v and w keep their signs.

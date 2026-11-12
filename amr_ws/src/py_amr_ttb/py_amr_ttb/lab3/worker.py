@@ -1,4 +1,4 @@
-"""Mapping and disk writes can take longer than a control tick,
+"""Planning and disk writes can take longer than a control tick,
 delaying the next velocity decision if run in the same callback.
 
 Use a separate process with bounded latest-work queues. NavigationEngine also runs
@@ -82,8 +82,9 @@ class NavigationEngine:
         """A replay cannot begin from incomplete or unverifiable
         learned data.
 
-        Load and optimize a completed saved run in replay mode; otherwise prepare a
-        new learning run.
+        Load a completed route in replay mode. Optimize it against saved occupancy
+        evidence only for map-backed recordings; otherwise use its route samples.
+        Learning starts with empty route memory.
         """
         self.cfg = config
         self.memory = RunMemory(config)

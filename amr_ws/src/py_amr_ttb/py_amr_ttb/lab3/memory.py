@@ -1,8 +1,8 @@
 """Without experience, the robot can repeatedly choose the same failed
 direction and cannot improve a later run from its earlier path.
 
-Retain sampled map poses, local failure penalties and saved map evidence for
-recovery and replay.
+Retain route poses and local failure penalties for detours and replay. Persist
+occupancy evidence only when a map-backed recording supplies it.
 """
 
 from dataclasses import asdict
@@ -37,7 +37,7 @@ class RunMemory:
         """Recording every stationary tick adds duplicates, but
         dropping turns would lose important route shape.
 
-        Append a map pose and time only after enough position or heading change.
+        Append a route-frame pose and time after enough position or heading change.
         """
         if (not self.route or math.dist(pose[:2], self.route[-1][:2]) >= self.cfg.route_spacing
                 or abs(normalize_angle(pose[2]-self.route[-1][2])) >= self.cfg.route_heading_spacing):
@@ -78,8 +78,8 @@ class RunMemory:
         with a partially written file.
 
         Write arrays and JSON metadata to a temporary NPZ, flush, then atomically
-        replace path. Store map layers, route, failures, configuration, transform
-        and completion status without pickle.
+        replace path. Store route, failures, configuration, transform and completion
+        status without pickle; include map layers only when grid is supplied.
         """
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)

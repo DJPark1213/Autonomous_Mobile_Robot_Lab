@@ -111,7 +111,7 @@ class Lab3Node(Node):
         self.get_logger().info(f'Lab 3 {self.cfg.run_mode}; telemetry: {self.telemetry.path}')
 
     def start_worker(self):
-        """A long mapping step must not hold up sensor callbacks or
+        """A long planning step must not hold up sensor callbacks or
         velocity updates.
 
         Start a separate process with one-item work and result queues.
@@ -142,9 +142,10 @@ class Lab3Node(Node):
 
     def on_odom(self, message):
         """A changed frame, invalid pose or clock reset would
-        invalidate the relationship between the robot and its existing map.
+        invalidate the relationship between the robot, route and sensor history.
 
-        Check source age and twist frame, then update starting-frame history.
+        Record local receipt time and check the twist frame, then update
+        starting-frame history with the sensor timestamp.
         Invalid input latches a fault requiring reset.
         """
         now = time.monotonic()
@@ -157,7 +158,7 @@ class Lab3Node(Node):
                                 message.twist.twist.angular.z, stamp, received,
                                 message.header.frame_id, message.pose.covariance)
         except ValueError as error:
-            # Silently accepting a frame or clock reset would invalidate the map;
+            # A frame or clock reset would invalidate the route and sensor history;
             # latch a fault until the operator explicitly starts a new run.
             self.fault = str(error)
 

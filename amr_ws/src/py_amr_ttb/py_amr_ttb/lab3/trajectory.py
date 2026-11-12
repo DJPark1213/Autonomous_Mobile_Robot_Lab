@@ -10,7 +10,7 @@ from dataclasses import replace
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
-from .geometry import inverse_points, circles_clear
+from .geometry import inverse_points, circles_clear, transform_points
 
 
 def approach(current, desired, acceleration, braking, dt):
@@ -77,14 +77,94 @@ def rollout(state, v_command, w_command, config, age=0.0):
     return poses
 
 
+def capsule_clearance(positions, hits):
+    """Measure each obstacle against the complete segment, including endpoints."""
+    delta = np.diff(positions, axis=0)
+    offset = hits[None] - positions[:-1, None]
+    length2 = np.sum(delta*delta, axis=1)
+    fraction = np.clip(np.sum(offset*delta[:, None], axis=2) /
+                       np.maximum(length2[:, None], 1e-20), 0., 1.)
+    return np.linalg.norm(offset-fraction[..., None]*delta[:, None], axis=2)
+
+
+def sweep_clear(trajectory, scan, config, state, v, diagnostics):
+    """Keep the physical body clear while permitting bounded margin recovery.
+
+    Near hits must never get closer during an escape, including its braking
+    sweep. Other hits retain the normal margin. Pure rotation preserves a
+    circular footprint; the planner separately limits unproductive turning.
+    """
+    positions = inverse_points(np.asarray(trajectory)[:, :2], scan.pose)
+    hits = [scan.points]
+    if scan.coverage is not None:
+        selected = scan.coverage.select(scan.coverage_time, scan.coverage_timeout)
+        if selected is None:
+            diagnostics['rejection'] = 'COVERAGE_EXPIRED'
+            return False
+        hits += [inverse_points(source.hits, scan.pose) for source in selected]
+    else:
+        hits += [inverse_points(transform_points(old.points, old.pose), scan.pose)
+                 for old in scan.history]
+    hits = np.concatenate(hits)
+    if not len(hits):
+        return True
+    distances = capsule_clearance(positions, hits)
+    # The rollout uses midpoint integration. Bound deviation from each chord
+    # by arc sagitta plus its chord-length integration error.
+    turn = np.abs(np.arctan2(np.sin(np.diff(np.asarray(trajectory)[:, 2])),
+                            np.cos(np.diff(np.asarray(trajectory)[:, 2]))))
+    lengths = np.linalg.norm(np.diff(positions, axis=0), axis=1)
+    error = lengths*(turn/8+turn*turn/24)
+    distances -= error[:, None]
+    initial = np.linalg.norm(hits-positions[0], axis=1)
+    minimum = float(distances.min())
+    diagnostics.update(initial_clearance=float(initial.min()), minimum_clearance=minimum)
+    if minimum <= config.robot_radius:
+        diagnostics['rejection'] = 'BODY_COLLISION'
+        return False
+    endpoint_distances = np.linalg.norm(positions[:, None]-hits[None], axis=2)
+    # Reserve closing motion toward the nearest observed surface, rather than
+    # toward individual beams farther along a parallel wall.
+    closing_speed = np.maximum(0., -np.diff(endpoint_distances.min(axis=1)) /
+                               config.prediction_step)[:, None]
+    required = np.broadcast_to(config.radius+config.command_latency*closing_speed, distances.shape)
+    near = initial < config.radius
+    if not np.any(near):
+        clear = bool(np.all(distances > required))
+        if not clear:
+            diagnostics['rejection'] = 'CLEARANCE_MARGIN'
+        return clear
+    travel = float(lengths.sum())
+    nondecreasing = np.all(distances[:, near] >= endpoint_distances[:-1, near]-1e-7)
+    other_clear = not np.any(distances[:, ~near] <= required[:, ~near])
+    gain = float(endpoint_distances[-1].min()-initial.min())
+    rotation = travel < 1e-5
+    bounded = abs(v) <= .08 and abs(state.v) <= .10 and travel <= .10
+    clear = bounded and nondecreasing and other_clear and (rotation or gain >= .001)
+    diagnostics.update(margin_escape=bool(clear), escape_gain=gain, escape_travel=travel)
+    if not clear:
+        diagnostics['rejection'] = 'ESCAPE_NOT_IMPROVING'
+    return bool(clear)
+
+
+def visibility_scan(scan):
+    """Separate visibility evidence from collision hits without erasing ranges."""
+    coverage = scan.coverage
+    if coverage is not None:
+        coverage = replace(coverage, sources=tuple(
+            replace(source, hits=np.empty((0, 2))) for source in coverage.sources))
+    return replace(scan, hits=np.zeros_like(scan.hits, dtype=bool), coverage=coverage,
+                   history=tuple(visibility_scan(old) for old in scan.history))
+
+
 def _evaluate_response(state, scan, v, w, config, now, diagnostics=None):
     """Obstacles can lie between predicted positions or along the
     later braking path, not just at a command's endpoint.
 
     Return (is_clear, trajectory). Predict through a complete stop, convert
-    positions into the scan frame, and use enlarged midpoint circles to cover
-    each sampled segment. Clearance depends on scan, pose and response-model
-    accuracy.
+    positions into the scan frame, check obstacle capsules, then certify body
+    visibility with endpoint and midpoint disks. This is the low-speed fallback;
+    clearance depends on scan, pose and response-model accuracy.
     """
     scan_age = max(0.0, now - scan.received)
     if scan.coverage is not None:
@@ -96,38 +176,77 @@ def _evaluate_response(state, scan, v, w, config, now, diagnostics=None):
     trajectory = rollout(state, v, w, config, scan_age)
     odometry_positions = np.asarray(trajectory)[:, :2]
     scan_frame_positions = inverse_points(odometry_positions, scan.pose)
-    # Endpoint checks can skip obstacles between samples. A midpoint circle
-    # enlarged by half the segment length covers the intervening body motion
-    # without adding needless travel padding when the robot is stationary.
-    segment_midpoints = (scan_frame_positions[:-1] + scan_frame_positions[1:]) / 2
-    segment_lengths = np.linalg.norm(np.diff(scan_frame_positions, axis=0), axis=1)
-    swept_radii = config.radius + segment_lengths / 2
-    # A stopped circular body repeats the same footprint while yaw settles.
-    # Exact deduplication preserves every distinct swept region.
-    footprints = np.unique(np.column_stack((segment_midpoints, swept_radii)), axis=0)
-    segment_midpoints, swept_radii = footprints[:, :2], footprints[:, 2]
-    is_clear = circles_clear(scan, segment_midpoints, swept_radii,
-                             occupied_radius=config.radius,
-                             occupied_center=scan_frame_positions[0], diagnostics=diagnostics)
+    details = diagnostics if diagnostics is not None else {}
+    if not sweep_clear(trajectory, scan, config, state, v, details):
+        return False, trajectory
+    # Endpoint disks cover the capsule caps. Midpoint disks cover its rectangular
+    # strip with only quadratic sideways enlargement. Visibility needs the body,
+    # while sweep_clear independently enforces the obstacle clearance margin.
+    segment_midpoints = (scan_frame_positions[:-1]+scan_frame_positions[1:])/2
+    lengths = np.linalg.norm(np.diff(scan_frame_positions, axis=0), axis=1)
+    turn = np.abs(np.arctan2(np.sin(np.diff(np.asarray(trajectory)[:, 2])),
+                            np.cos(np.diff(np.asarray(trajectory)[:, 2]))))
+    error = lengths*(turn/8+turn*turn/24)
+    radii = np.sqrt((config.robot_radius+error)**2+(lengths/2)**2)
+    footprints = np.unique(np.vstack((
+        np.column_stack((scan_frame_positions, np.full(len(scan_frame_positions), config.robot_radius))),
+        np.column_stack((segment_midpoints, radii)))), axis=0)
+    is_clear = circles_clear(visibility_scan(scan), footprints[:, :2], footprints[:, 2],
+                             occupied_radius=config.robot_radius,
+                             occupied_center=scan_frame_positions[0], diagnostics=details)
+    if not is_clear:
+        details['rejection'] = 'UNOBSERVED_SWEEP'
+
     return is_clear, trajectory
 
 
-def evaluate_trajectory(state, scan, v, w, config, now, diagnostics=None):
-    """Require nominal and slower steering responses to leave stopping clearance.
+def _normal_response(state, scan, v, w, config, now, diagnostics):
+    """Cover each stopping-path segment with a clearance-inflated midpoint disk."""
+    scan = replace(scan, coverage_time=now, coverage_timeout=config.sensor_timeout,
+                   history=tuple(old for old in scan.history
+                                 if 0 <= now-old.received <= config.sensor_timeout))
+    trajectory = rollout(state, v, w, config, max(0., now-scan.received))
+    positions = inverse_points(np.asarray(trajectory)[:, :2], scan.pose)
+    midpoints = (positions[:-1]+positions[1:])/2
+    radii = config.radius+np.linalg.norm(np.diff(positions, axis=0), axis=1)/2
+    footprints = np.unique(np.column_stack((midpoints, radii)), axis=0)
+    clear = circles_clear(scan, footprints[:, :2], footprints[:, 2],
+                          occupied_radius=config.radius, occupied_center=positions[0],
+                          diagnostics=diagnostics)
+    return clear, trajectory
 
-    The second response uses angular_response_fraction (0.75 by default).
-    It protects turns against moderate tracking lag, without treating the nominal
-    path as the only possible motion. Hardware limits still need calibration.
+
+def evaluate_trajectory(state, scan, v, w, config, now, diagnostics=None):
+    """Use normal stopping checks, with bounded low-speed capsule recovery.
+
+    The recovery check never authorizes a physical-body intersection or unknown
+    sweep. Both nominal and slower steering responses must pass the same policy.
     """
-    clear, trajectory = _evaluate_response(state, scan, v, w, config, now, diagnostics)
-    if not clear or abs(w)+abs(state.w) < .01:
-        return clear, trajectory
+    details = diagnostics if diagnostics is not None else {}
+    clear, trajectory = _normal_response(state, scan, v, w, config, now, details)
+    turning = abs(w)+abs(state.w) >= .01
     slower = replace(config, angular_acceleration=config.angular_acceleration*config.angular_response_fraction,
                      angular_braking=config.angular_braking*config.angular_response_fraction)
-    details = {}
-    robust, _ = _evaluate_response(state, scan, v, w, slower, now, details)
-    if diagnostics is not None:
-        diagnostics['slower_steering_clear'] = robust
-        if not robust:
-            diagnostics['slower_steering_rejection'] = details
-    return robust, trajectory
+    if clear and turning:
+        slow_details = {}
+        clear, _ = _normal_response(state, scan, v, w, slower, now, slow_details)
+        details['slower_steering_clear'] = clear
+        if not clear:
+            details['slower_steering_rejection'] = slow_details
+    if clear:
+        return True, trajectory
+    if abs(v) > .08 or abs(state.v) > .10:
+        details['rejection'] = 'NORMAL_SWEEP_BLOCKED'
+        return False, trajectory
+    recovery = {}
+    clear, trajectory = _evaluate_response(state, scan, v, w, config, now, recovery)
+    if clear and turning:
+        slow_details = {}
+        clear, _ = _evaluate_response(state, scan, v, w, slower, now, slow_details)
+        recovery['slower_steering_clear'] = clear
+        if not clear:
+            recovery['rejection'] = 'SLOWER_STEERING_BLOCKED'
+            recovery['slower_steering_rejection'] = slow_details
+    details.update(recovery)
+    details['capsule_recovery'] = bool(clear)
+    return clear, trajectory
