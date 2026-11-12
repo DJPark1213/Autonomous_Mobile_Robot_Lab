@@ -112,10 +112,15 @@ class TrajectoryPlanner:
         bearing = math.atan2(target[1]-state.pose[1], target[0]-state.pose[0])
         heading = normalize_angle(bearing-state.pose[2])
         top = min(c.max_linear, math.sqrt(2*c.linear_braking*max(0., objective_distance-.08)))
-        steering = np.unique(np.append(np.linspace(-c.max_angular, c.max_angular, 9),
-                                        [0., np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular), self.previous[1]]))
+        # Raising a speed cap must not remove the fine choices needed in tight turns.
+        angular_steps = math.floor(c.max_angular/.35)
+        steering = np.unique(np.append(np.arange(-angular_steps, angular_steps+1)*.35,
+                                        [-c.max_angular, c.max_angular,
+                                         np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular),
+                                         self.previous[1]]))
         candidates = []
-        speeds = (top, top/2, min(top, .05), 0.) + ((-c.reverse_speed,) if allow_reverse else ())
+        speeds = np.unique(np.append(np.arange(0., top, .05),
+                                     [top, -c.reverse_speed] if allow_reverse else [top]))
         for v in speeds:
             for w in steering:
                 if abs(v*w) > c.lateral_acceleration:

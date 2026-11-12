@@ -58,8 +58,8 @@ escape from every maze or visibility configuration.
 | Candidate horizon / supervisor horizon | 0.70 s / 0.50 s, each followed by braking |
 | Prediction sampling | 0.05 s, with enlarged midpoint footprints between samples |
 | Local guide lookahead | 0.65 m |
-| Forward / reverse speed caps | 0.30 / 0.08 m/s |
-| Angular speed cap | 1.4 rad/s |
+| Forward / reverse speed caps | 0.46 / 0.08 m/s |
+| Angular speed cap | 2.46 rad/s |
 | Physical radius / clearance allowance | 0.18 / 0.01 m |
 
 These are scheduling targets and model assumptions, not measured hardware
@@ -154,7 +154,7 @@ requests zero velocity and asks the worker to persist its latest state.
 
 ```bash
 ros2 run py_amr_ttb lab3_controller --ros-args \
-  -p robot_namespace:=/TTB10 -p goal_x:=10.0 -p max_linear:=0.30
+  -p robot_namespace:=/TTB10 -p goal_x:=10.0 -p max_linear:=0.46
 ```
 
 ## Diagnostics and tests

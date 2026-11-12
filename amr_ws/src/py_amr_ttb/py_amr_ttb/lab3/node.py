@@ -91,6 +91,8 @@ class Lab3Node(Node):
         self.captured_failures = set()
         self.last_diagnostic_time = float('-inf')
         self.result = MotionResult()
+        self.published_command = (0., 0.)
+        self.no_motion_since = None
         self.fault = None
         self.paused = False
         self.publisher = self.create_publisher(Twist, self.cfg.topic('cmd_vel'), 1)
@@ -260,7 +262,17 @@ class Lab3Node(Node):
                 if put_latest(self.incoming, Work(state, scan, now, self.result.blocked,
                                                   self.result.reason)):
                     self.last_submit = now
-            result = self.controller.step_plan(state, scan, plan, now, dt)
+            result = self.controller.step_plan(state, scan, plan, now, dt, self.published_command)
+        # A command ramp cannot recover a base that never responds.
+        if (valid and (abs(result.v) >= .05 or abs(result.w) >= .25)
+                and abs(state.v) < .01 and abs(state.w) < .05):
+            if self.no_motion_since is None:
+                self.no_motion_since = now
+            elif now-self.no_motion_since >= 2.:
+                self.fault = 'No measured motion after two seconds of velocity commands'
+                result = MotionResult(reason='FAULT: '+self.fault)
+        else:
+            self.no_motion_since = None
         finished = time.monotonic()
         if finished-started > self.cfg.control_period:
             result = MotionResult(reason='CONTROL_DEADLINE', diagnostics={
@@ -320,6 +332,7 @@ class Lab3Node(Node):
         message = Twist()
         message.linear.x, message.angular.z = float(v), float(w)
         self.publisher.publish(message)
+        self.published_command = (v, w)
 
     def stop_run(self, request, response):
         """An operator stop must prevent later ticks from resuming
@@ -366,6 +379,8 @@ class Lab3Node(Node):
         self.coverage_sequence = -1
         self.controller = MotionController(self.cfg)
         self.result = MotionResult()
+        self.published_command = (0., 0.)
+        self.no_motion_since = None
         self.last_scan_stamp = self.last_submit = float('-inf')
         self.start_worker()
         self.paused = False

@@ -198,7 +198,7 @@ class GeometryTests(unittest.TestCase):
         np.testing.assert_allclose(inverse_points([[3., 6.]], (3., 4., math.pi/2)), [[2., 0.]], atol=1e-10)
 
     def test_config_rejects_invalid_motion_and_search_limits(self):
-        for values in ({'max_linear': .4}, {'linear_braking': 0.}, {'goal_x': 100.},
+        for values in ({'max_linear': .47}, {'max_angular': 2.47}, {'linear_braking': 0.}, {'goal_x': 100.},
                        {'local_spacing': .001}, {'angular_response_fraction': 2.}):
             with self.assertRaises(ValueError):
                 Lab3Config(**values)
@@ -212,11 +212,23 @@ class StateAndMotionTests(unittest.TestCase):
     def test_safe_command_respects_measured_acceleration(self):
         state = RobotState((0., 0., 0.), .1, .2, 0., 0.)
         plan = Plan(Target((2., 1.)), (0., 0., 0.), 0., command=(.3, 1.))
-        result = MotionController(self.cfg).step_plan(state, scan(self.cfg), plan, 0., .05)
+        result = MotionController(self.cfg).step_plan(state, scan(self.cfg), plan, 0., .05, (state.v, state.w))
         self.assertGreater(result.v, state.v)
         self.assertLessEqual(result.v-state.v, self.cfg.linear_acceleration*.05+1e-9)
         self.assertLessEqual(result.w-state.w, self.cfg.angular_acceleration*.05+1e-9)
         self.assertFalse(result.blocked)
+
+    def test_command_ramp_advances_even_when_odometry_stays_at_rest(self):
+        controller = MotionController(self.cfg)
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        plan = Plan(Target((2., 0.)), (0., 0., 0.), 0., command=(.3, 0.))
+        previous = (0., 0.)
+        for tick in range(1, 6):
+            result = controller.step_plan(state, scan(self.cfg), plan, tick*.05, .05, previous)
+            previous = (result.v, result.w)
+            self.assertAlmostEqual(result.v, tick*.02)
+        stopped = controller.step_plan(state, scan(self.cfg), None, .3, .05, previous)
+        self.assertEqual((stopped.v, stopped.w), (0., 0.))
 
     def test_stale_scan_stops_valid_plan(self):
         state = RobotState((0., 0., 0.), .2, 0., 1., 1.)
@@ -243,7 +255,7 @@ class StateAndMotionTests(unittest.TestCase):
         state = RobotState((0., 0., 0.), .25, 0., 0., 0.)
         plan = Plan(Target((2., 0.)), (0., 0., 0.), 0., command=(.3, 0.))
         sensor = scan(self.cfg, raycast([((.3, -1.), (.3, 1.))], state.pose))
-        result = MotionController(self.cfg).step_plan(state, sensor, plan, 0., .05)
+        result = MotionController(self.cfg).step_plan(state, sensor, plan, 0., .05, (state.v, state.w))
         self.assertTrue(result.blocked)
         self.assertEqual((result.v, result.w), (0., 0.))
 

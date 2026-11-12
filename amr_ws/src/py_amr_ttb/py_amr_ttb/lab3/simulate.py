@@ -143,6 +143,7 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
     motion = MotionController(config)
     pose, v, w = start, 0., 0.
     scan = plan = None
+    previous_command = (0., 0.)
     blocked = False
     motion_reason = ''
     reasons, modes = Counter(), Counter()
@@ -161,7 +162,8 @@ def simulate(name='obstacle', config=None, seconds=90., start=(0., 0., 0.)):
             durations.append(time.perf_counter()-began)
         target = plan.target if plan else None
         began = time.perf_counter()
-        result = motion.step_plan(state, scan, plan, now, config.control_period)
+        result = motion.step_plan(state, scan, plan, now, config.control_period, previous_command)
+        previous_command = (result.v, result.w)
         control_durations.append(time.perf_counter()-began)
         blocked = result.blocked
         motion_reason = result.reason

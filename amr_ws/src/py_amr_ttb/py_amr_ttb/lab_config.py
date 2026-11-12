@@ -128,9 +128,9 @@ class Lab3Config:
     # Command limits and calibrated response govern the predicted stopping path.
 
     # Forward speed cap (m/s); raise gradually after braking checks.
-    max_linear: float = 0.30
+    max_linear: float = 0.46
 
-    max_angular: float = 1.4
+    max_angular: float = 2.46
     reverse_speed: float = 0.08
     linear_acceleration: float = 0.4
     linear_braking: float = 0.5
@@ -231,8 +231,8 @@ class Lab3Config:
             raise ValueError('run_mode must be learn or replay')
         if not self.robot_namespace.startswith('/') or self.robot_namespace.endswith('/'):
             raise ValueError('robot_namespace must be absolute without trailing slash')
-        if self.max_linear > .31 or self.max_angular > 1.9:
-            raise ValueError('Keep commands within TurtleBot 4 safety-enabled limits')
+        if self.max_linear > .46 or self.max_angular > 2.46:
+            raise ValueError('Commands exceed configured platform limits (0.46 m/s, 2.46 rad/s)')
         if self.reverse_speed > self.max_linear or self.robot_radius < .18 or self.safety_margin < .01:
             raise ValueError('Invalid reverse speed or footprint')
         if not 0 < self.scan_known_fraction <= 1 or self.free_threshold >= 0:

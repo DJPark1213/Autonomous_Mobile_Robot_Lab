@@ -15,7 +15,7 @@ class MotionController:
     def safe(self, state, scan, v, w, now, diagnostics=None):
         return evaluate_trajectory(state, scan, v, w, self.cfg, now, diagnostics)
 
-    def step_plan(self, state, scan, plan, now, dt):
+    def step_plan(self, state, scan, plan, now, dt, previous_command=(0., 0.)):
         c = self.cfg
         lifetime = min(c.plan_timeout, 2*c.map_period)
         if plan is None or not 0 <= now-plan.created <= lifetime:
@@ -40,8 +40,8 @@ class MotionController:
             coverage = replace(coverage, sources=tuple(item[0] for item in eligible),
                                receipts=tuple(item[1] for item in eligible))
         scan = replace(scan, history=history, coverage=coverage)
-        v = approach(state.v, desired_v, c.linear_acceleration, c.linear_braking, dt)
-        w = approach(state.w, desired_w, c.angular_acceleration, c.angular_braking, dt)
+        v = approach(previous_command[0], desired_v, c.linear_acceleration, c.linear_braking, dt)
+        w = approach(previous_command[1], desired_w, c.angular_acceleration, c.angular_braking, dt)
         checks = {}
         safe, trajectory = self.safe(state, scan, v, w, now, checks)
         receipts = [state.received, scan.received]
