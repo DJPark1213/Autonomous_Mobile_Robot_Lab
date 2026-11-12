@@ -8,8 +8,9 @@ Commands below assume this directory is your working directory.
 
 Lab 3 uses LiDAR and odometry to navigate an obstacle course and save its
 driven route. The default goal is (10, 0) metres in starting odometry and the
-default speed limit is 0.30 m/s. See the
-[Lab 3 module diagram and tuning guide](src/py_amr_ttb/py_amr_ttb/lab3/README.md).
+default forward speed limit is 0.46 m/s. See the
+[repository architecture and decision flow](../README.md#lab-3-module-diagram)
+and [detailed Lab 3 guide](src/py_amr_ttb/py_amr_ttb/lab3/README.md).
 
 Build and start the first run:
 
