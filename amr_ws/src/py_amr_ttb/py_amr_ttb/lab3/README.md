@@ -8,37 +8,6 @@ the driven route. The default goal is (10, 0) metres in the starting odometry
 frame. The run completes when the robot reaches the configured goal tolerance.
 Replay uses a completed route and checks shortcuts against current LiDAR.
 
-### Passage entry and open-space handoff
-
-Passage maneuvers retain precise alignment (0.01 rad), crawl speed (at most
-0.10 m/s), and the 0.06 m approach reserve from `ccf17e7`. The default maximum
-speed remains 0.30 m/s. Scans continue to feed planning during turns.
-
-During passage commitment, a different opening must improve the score by at
-least 0.10, have at least `target_reserve` clearance in the farther half of its
-approach, and remain within 0.25 m of the candidate on three distinct scans.
-A disappearing candidate resets confirmation. An invalid current route loses
-commitment immediately. Every candidate must support an aligned forward command
-as well as the current-motion checks; permission to rotate alone is insufficient.
-
-A direction-changing handoff resets alignment and brakes until measured linear
-speed is at most 0.025 m/s and angular speed is at most `angular_settle_speed`.
-Advancing a waypoint along the same direction does not restart this brake.
-After leaving passage mode, crawl speed remains until the observed area around
-the robot clears its footprint plus `target_reserve`. All commands retain the
-full stopping-sweep check.
-
-CSV diagnostics include planner candidate scores, rejected-candidate reasons,
-the selected target, confirmation count, and transition reason even during normal
-motion. Measured and commanded speeds remain separate CSV columns.
-
-Validation at the same 0.30 m/s cap: the 41 cm straight-corridor simulation takes
-212 control ticks (10.6 s) with both baseline and revised logic. In the new
-sideways-opening scenario, the baseline is unfinished after 700 ticks (35 s),
-while the revision reaches the goal in 282 ticks (14.1 s), maintaining footprint
-clearance and without reversing. These simulations do not replace a hardware
-retest of the actual passage.
-
 ## Connections and ownership
 
 ```mermaid
@@ -118,6 +87,24 @@ are easy to distinguish.
    necessary. Every command must leave room for the full stopping sweep.
 5. Exit wall following when two scans show a clear route to the goal after
    progress around the obstacle. Reach the goal tolerance to complete the run.
+
+### Forward progress and recovery
+
+When a nearby obstacle leaves a clear corridor, the planner holds an aligned
+forward target while measured odometry shows progress. Recovery can select a
+25 cm forward target after checking at least 30 cm of observed travel. Current
+LiDAR and the complete stopping sweep are checked at each control cycle.
+
+Forward commands take priority during local target selection. A turn-only
+candidate requires a verified forward continuation at the aligned pose.
+Changing a waypoint preserves the measured-progress reference. Sustained
+blockage and stalls are recorded as failed directions before selecting another
+target. Diagnostic selection values include `FORWARD_EXIT`, `HOLD_FORWARD`,
+`OPEN_SPACE`, and `ALIGN_FOR_FORWARD`.
+
+Route-only replay uses live steering and braking checks to set speed. Map-backed
+replay also applies its route bend-speed profile. Replay advances its route index
+monotonically and uses measured progress and blocked feedback for stall detection.
 
 ## Build and run on the ROS machine
 
@@ -266,7 +253,9 @@ PYTHONPATH=amr_ws/src/py_amr_ttb python3 -m py_amr_ttb.lab3.simulate \
   --scenario pocket --two-runs --output output/lab3-pocket
 ```
 
-The simulator also offers `straight`, `obstacle`, and `corner`. It reports elapsed
+The simulator offers `straight`, `obstacle`, `corner`, `pocket`,
+`corridor`, and `staggered`. The corridor is 42 cm wide. The staggered course
+contains alternating wall ends with 57 cm openings. It reports elapsed
 simulated time, actual wall clearance, peak speed, modes, and host worker timing.
 Its plant has finite acceleration/braking different from the controller model.
 It does not emulate ROS delivery, wheel slip, sensor noise, or physical contacts.

@@ -52,21 +52,17 @@ class Planner:
         self.wall_clear_scan = None
         self.escape_targets = []
         self.escape_retry_at = -math.inf
-        self.opening_candidate = None
-        self.opening_confirmations = 0
-        self.opening_scan = None
 
     def commit(self, target, state, pose, now):
         if target is not None and (self.target is None or target.key != self.target.key):
-            self.opening_candidate = None
-            self.opening_confirmations = 0
-            self.opening_scan = None
             heading = math.atan2(target.point[1]-pose[1], target.point[0]-pose[0])-pose[2]
             if target.reverse:
                 heading -= math.pi
             turn_time = abs(normalize_angle(heading))/max(.1, self.cfg.max_angular/2)
-            self.target_committed_until = now+max(self.cfg.stall_timeout, turn_time+1.)
-            self.anchor, self.progress_at = state.pose[:2], now
+            if self.target is None or self.target.mode != target.mode:
+                self.target_committed_until = now+max(self.cfg.stall_timeout, turn_time+1.)
+            if self.anchor is None:
+                self.anchor, self.progress_at = state.pose[:2], now
             self.blocked_time = 0.
             self.recovery_stalled = False
         self.target = target
@@ -163,7 +159,11 @@ class Planner:
         self.route_index = max(self.route_index, selected)
         point = tuple(self.route[selected])
         # The speed cap anticipates bends. The controller checks live clearance.
-        self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
+        if grid is not None:
+            self.diagnostics['speed_cap'] = float(self.speeds[max(0, selected-1)])
+        else:
+            # Live steering and stopping checks set speed for sampled odometry routes.
+            self.diagnostics.pop('speed_cap', None)
         return Target(point, 'FINAL' if selected == len(self.route)-1 else 'SECOND_RUN')
 
     def opening_approach(self, state, scan, local_scan, pose, now, reference):
@@ -259,25 +259,42 @@ class Planner:
                         best = target
         return best
 
-    def select_local_target(self, state, scan, local_scan, pose, now, keep_current=True,
-                            hold_passage=False):
+    def select_local_target(self, state, scan, local_scan, pose, now, keep_current=True):
         """Compare observed directions and the current target on every update."""
         c = self.cfg
         goal = (c.goal_x, c.goal_y)
         goal_heading = normalize_angle(math.atan2(goal[1]-pose[1], goal[0]-pose[0])-pose[2])
+        self.diagnostics = {}
+        points = local_scan.points
+        beside = points[(abs(points[:, 0]) < .35) & (abs(points[:, 1]) < c.radius+.25)]
+        # Keep an aligned forward waypoint while passing a nearby obstacle.
+        if len(beside) and keep_current and self.target is not None and not self.target.reverse:
+            dx, dy = self.target.point[0]-pose[0], self.target.point[1]-pose[1]
+            heading = normalize_angle(math.atan2(dy, dx)-pose[2])
+            if (abs(heading) <= c.alignment_tolerance
+                    and math.hypot(dx, dy) > self.target.arrival_distance(c.target_reached)
+                    and self.observed_segment(pose, local_scan, self.target.point)):
+                command = MotionController(c).step(state, scan, self.target, now, c.control_period)
+                if command.v > 0. and not command.blocked:
+                    self.diagnostics['selection'] = 'HOLD_FORWARD'
+                    return self.target
+
+        # A clear corridor beside an obstacle gives recovery a forward exit.
+        if (len(beside) and (not keep_current or self.target is None)
+                and self.memory.penalty(pose[:2], pose[2], now) < .5):
+            room = observed_travel(local_scan, 0., c.radius, .40, step=.025)
+            if room >= .30:
+                point = tuple(transform_points([(.25, 0.)], pose)[0])
+                target = Target(point, 'FORWARD_CORRECTION')
+                command = MotionController(c).step(state, scan, target, now, c.control_period)
+                if command.v > 0. and not command.blocked:
+                    self.diagnostics['selection'] = 'FORWARD_EXIT'
+                    return target
+
         headings = list(np.linspace(-math.pi/2, math.pi/2, 13))
         if abs(goal_heading) <= math.pi/2:
             headings.append(goal_heading)
-        # Refine each coarse sector around its widest obstacle-free bearing.
-        # Full observed-footprint checks below validate every retained direction.
-        fine = np.linspace(-math.pi/2, math.pi/2, 361)
-        room = free_distances(local_scan.points, fine, c.radius, c.scoring_horizon)
-        for start in range(0, 360, 30):
-            sector = room[start:start+31]
-            best = np.flatnonzero(sector >= sector.max()-1e-6)
-            headings.append(float(fine[start+best[len(best)//2]]))
         candidates = []
-        self.diagnostics = {}
         for heading in np.unique(headings):
             candidate = self.evaluate(heading, local_scan, pose, state, None, now)
             if candidate is None:
@@ -290,13 +307,6 @@ class Planner:
                     candidates.append(self.target)
 
         ranked = []
-        points = local_scan.points
-        current_observed = any(self.target is not None and target.key == self.target.key
-                               for target in candidates)
-        self.diagnostics.update(candidate_count=len(candidates),
-                                current_target_observed=current_observed,
-                                deferred_candidates=0, motion_rejections=0,
-                                rejected_candidates=[])
         for target in candidates:
             dx, dy = target.point[0]-pose[0], target.point[1]-pose[1]
             distance = math.hypot(dx, dy)
@@ -304,133 +314,42 @@ class Planner:
             # Sample clearance along the entire approach, including its entrance.
             positions = np.linspace(0., distance, 12)[:, None] * np.array(
                 [[math.cos(heading), math.sin(heading)]])
-            clearance = np.full(len(positions), c.scoring_horizon)
-            if len(points):
-                clearance = np.maximum(0., np.linalg.norm(
-                    positions[:, None, :]-points[None, :, :], axis=2).min(axis=1)-c.radius)
-            # A nearby wall can limit the entry to every candidate. Score the
-            # space ahead as well so the common entry does not hide a wider exit.
-            exit_clearance = float(clearance[len(clearance)//2:].min())
-            # Commitment prefers the current passage over other tight routes;
-            # it must never remove the alternatives when that passage fails.
-            # An unobserved current target has no claim to this preference.
-            deferred = (hold_passage and current_observed
-                        and target.key != self.target.key
-                        and exit_clearance < c.target_reserve)
-            self.diagnostics['deferred_candidates'] += int(deferred)
-            narrow = clearance < c.target_reserve
-            cruise = c.max_linear
-            passage_speed = min(.10, cruise/3)
-            narrow_fraction = float(np.mean(narrow))
-            # Preserve the maneuver contract of an existing passage waypoint.
-            # A later scan clearing its remaining segment does not authorize
-            # cruise speed or the larger FIRST_RUN arrival radius mid-maneuver.
-            # A different, verified open-space candidate may still replace it.
-            if narrow.any() or target.mode == 'PASSAGE':
-                target = replace(target, mode='PASSAGE')
-                cruise = passage_speed
-                narrow_fraction = 1.
-            travel_time = distance*((1-narrow_fraction)/c.max_linear
-                                    + narrow_fraction/passage_speed)
-            turn_time = abs(heading)/c.max_angular
-            braking_time = max(0., abs(state.v)-cruise)/c.linear_braking
-            acceleration_time = abs(cruise-abs(state.v))/c.linear_acceleration
-            estimated_time = (travel_time + math.dist(target.point, goal)/c.max_linear
-                              + turn_time + braking_time + acceleration_time/2)
+            clearance = c.scoring_horizon
+            if len(local_scan.points):
+                clearance = max(0., float(np.linalg.norm(
+                    positions[:, None, :]-local_scan.points[None, :, :], axis=2).min())-c.radius)
             progress = math.dist(pose[:2], goal)-math.dist(target.point, goal)
             score = (c.weight_goal*progress/c.scoring_horizon
                      + c.weight_travel*distance/c.target_distance
-                     + c.weight_clearance*min(1., exit_clearance/.35)
-                     - .1*estimated_time
+                     + c.weight_clearance*min(1., clearance/.35)
                      - c.weight_heading*abs(heading)/math.pi
                      - c.weight_history*self.memory.penalty(pose[:2], pose[2]+heading, now))
             if self.target is not None and target.key == self.target.key:
                 score += .05
-            ranked.append((deferred, score, target, heading, distance, estimated_time, exit_clearance))
+            ranked.append((score, target, heading, distance))
 
-        verified = []
-        self.diagnostics['candidates'] = [dict(point=t.point, score=s, exit_clearance=e)
-                                         for _, s, t, _, _, _, e in ranked]
-        # Validate the incumbent first, then the best alternative. Commitment
-        # cannot protect a target whose approach or motion is no longer valid.
-        for deferred, score, target, heading, distance, estimated_time, exit_clearance in sorted(
-                ranked, key=lambda item: (
-                    0 if hold_passage and self.target is not None and item[2].key == self.target.key else 1,
-                    -item[1])):
+        turn_target = None
+        for score, target, heading, distance in sorted(ranked, key=lambda item: item[0], reverse=True):
             local = (distance*math.cos(heading), distance*math.sin(heading))
             probe = replace(target, point=tuple(transform_points([local], state.pose)[0]))
-            # Turning alone is not evidence that this route can be traversed.
-            # Verify the aligned crawl as well, retaining the approach reserve
-            # and the same measured scan for its full stopping sweep.
-            aligned = replace(state, pose=(*state.pose[:2], state.pose[2]+heading), v=0., w=0.)
-            forward = MotionController(c).step(aligned, scan, probe, now, c.control_period)
-            if forward.blocked or forward.v <= 0.:
-                self.diagnostics['motion_rejections'] += 1
-                self.diagnostics['rejected_candidates'].append(
-                    dict(point=target.point, stage='ALIGNED_CRAWL', reason=forward.reason))
-                continue
             command = MotionController(c).step(state, scan, probe, now, c.control_period)
             if command.blocked or not (command.v or command.w):
-                # A clear corridor may require braking and alignment first.
-                # Retain it only if stopping now and the stopped approach qualify.
-                controller = MotionController(c)
-                stop_clear, _ = controller.safe(state, scan, 0., 0., now)
-                stopped = replace(state, v=0., w=0.)
-                probe = replace(probe, mode='PASSAGE')
-                future = controller.step(stopped, scan, probe, now, c.control_period)
-                if not stop_clear or future.blocked or not (future.v or future.w):
-                    self.diagnostics['motion_rejections'] += 1
-                    self.diagnostics['rejected_candidates'].append(
-                        dict(point=target.point, stage='CURRENT_MOTION',
-                             reason=future.reason if stop_clear else 'STOP_BLOCKED'))
-                    continue
-                target = replace(target, mode='PASSAGE')
-            if target.mode != 'PASSAGE' and math.dist(target.point, goal) <= c.goal_tolerance:
-                target = replace(target, mode='FINAL')
-            verified.append((replace(target, score=score), heading, estimated_time, exit_clearance, deferred))
-            if not hold_passage or self.target is None or target.key != self.target.key:
-                break
-        if not verified:
-            self.opening_candidate = None
-            self.opening_confirmations = 0
-            return None
-        selected = verified[-1]
-        incumbent = next((row for row in verified if self.target is not None
-                          and row[0].key == self.target.key), None)
-        transition = 'CURRENT_INVALID' if hold_passage and incumbent is None else 'BEST_ROUTE'
-        if hold_passage and incumbent is not None:
-            better = (selected[0].key != incumbent[0].key
-                      and selected[0].score >= incumbent[0].score + .10
-                      and selected[3] >= c.target_reserve)
-            if better:
-                point = selected[0].point
-                consistent = (self.opening_candidate is not None
-                              and math.dist(point, self.opening_candidate) <= .25)
-                scan_id = (scan.sequence, scan.stamp)
-                if not consistent:
-                    self.opening_confirmations = 0
-                if scan_id != self.opening_scan:
-                    self.opening_confirmations += 1
-                    self.opening_scan = scan_id
-                self.opening_candidate = point
-                transition = 'OPENING_CONFIRMED' if self.opening_confirmations >= 3 else 'CONFIRMING_OPENING'
-                if self.opening_confirmations < 3:
-                    selected = incumbent
-            else:
-                self.opening_candidate = None
-                self.opening_confirmations = 0
-                selected = incumbent
-                transition = 'KEEP_PASSAGE'
-        else:
-            self.opening_candidate = None
-            self.opening_confirmations = 0
-        target, heading, estimated_time, exit_clearance, deferred = selected
-        self.diagnostics.update(score=target.score, selection='OPEN_SPACE', heading=heading,
-                                estimated_time=estimated_time, exit_clearance=exit_clearance,
-                                selected_deferred=bool(deferred), transition=transition,
-                                opening_confirmations=self.opening_confirmations,
-                                selected_target=target.point)
-        return target
+                continue
+            if command.v <= 0.:
+                aligned = replace(state, pose=(state.pose[0], state.pose[1],
+                                               state.pose[2]+heading), v=0., w=0.)
+                continuation = MotionController(c).step(aligned, scan, probe, now, c.control_period)
+                if turn_target is None and continuation.v > 0. and not continuation.blocked:
+                    turn_target = replace(target, score=score)
+                continue
+            self.diagnostics.update(candidate_count=len(candidates), score=score,
+                                    selection='OPEN_SPACE', heading=heading)
+            if math.dist(target.point, goal) <= c.goal_tolerance:
+                return replace(target, mode='FINAL', score=score)
+            return replace(target, score=score)
+        if turn_target is not None:
+            self.diagnostics['selection'] = 'ALIGN_FOR_FORWARD'
+        return turn_target
 
     def step(self, state, scan, mapper, now, blocked=False, motion_reason='', feedback_target=None):
         """A useful target can become blocked or lead back into a failed area.
@@ -523,12 +442,14 @@ class Planner:
             return Plan(self.target, transform, now, revision)
 
         if grid is None and self.route is None:
-            hold_passage = (self.target is not None and self.target.mode == 'PASSAGE'
-                            and not near and committed and not sustained_block and not no_progress)
-            target = self.select_local_target(
-                state, scan, local_scan, pose, now,
-                keep_current=not sustained_block and not no_progress,
-                hold_passage=hold_passage)
+            if self.target is not None and (sustained_block or no_progress):
+                failed_heading = math.atan2(self.target.point[1]-pose[1],
+                                            self.target.point[0]-pose[0])
+                self.memory.fail(pose[:2], failed_heading, now)
+                self.progress_at = now
+                self.blocked_time = 0.
+            target = self.select_local_target(state, scan, local_scan, pose, now,
+                                              keep_current=not sustained_block and not no_progress)
             if target is not None:
                 self.commit(target, state, pose, now)
                 return Plan(target, transform, now, revision, diagnostics=self.diagnostics)
@@ -566,7 +487,7 @@ class Planner:
         active_heading = goal_angle if near else math.atan2(
             self.target.point[1]-pose[1], self.target.point[0]-pose[0])
         capped = grid is not None and grid.closed_ahead(pose[:2], active_heading)
-        stalled = no_progress or sustained_block or (near and revisited) or capped
+        stalled = no_progress or sustained_block or (self.route is None and near and revisited) or capped
         if motion_reason in ('WAITING_FOR_FRESH_PLAN', 'WAITING_FOR_SENSORS',
                              'CONTROL_DEADLINE', 'COMMAND_EXPIRED', 'SEARCHING_ROUTE'):
             stalled = capped or sustained_block or failed_backtrack

@@ -10,10 +10,10 @@ from dataclasses import replace
 import numpy as np
 
 from py_amr_ttb.odom_utils import normalize_angle
-from .geometry import inverse_points, scan_at_pose, circles_observed
+from .geometry import inverse_points, scan_at_pose, free_distances
 from .types import MotionResult
 # Keep these imports available to existing callers of motion.approach/rollout.
-from .trajectory import approach, rollout, evaluate_trajectory, command_candidates, arc_obstacle_distance
+from .trajectory import approach, rollout, evaluate_trajectory, command_candidates
 
 
 class MotionController:
@@ -31,9 +31,6 @@ class MotionController:
         self.turn_anchor = None
         self.previous_yaw = None
         self.turn_without_progress = 0.
-        self.active_target = None
-        self.handoff_pending = False
-        self.passage_exit_pending = False
 
     def safe(self, state, scan, v, w, now, diagnostics=None):
         """Validate a command through braking using the shared trajectory evaluator."""
@@ -99,20 +96,6 @@ class MotionController:
 
         if target.mode == 'DONE':
             return MotionResult(reason='DONE')
-        if self.active_target is not None and target.key != self.active_target.key:
-            old_bearing = math.atan2(self.active_target.point[1]-state.pose[1],
-                                    self.active_target.point[0]-state.pose[0])
-            new_bearing = math.atan2(target.point[1]-state.pose[1], target.point[0]-state.pose[0])
-            changed_direction = (abs(normalize_angle(new_bearing-old_bearing)) > .15
-                                 or target.reverse != self.active_target.reverse)
-            # Advancing a waypoint on the same route is not another handoff.
-            self.handoff_pending = (self.handoff_pending or changed_direction
-                                    and (self.aligning or self.active_target.mode == 'PASSAGE'))
-            self.passage_exit_pending = (self.passage_exit_pending
-                                         or self.active_target.mode == 'PASSAGE')
-            if changed_direction:
-                self.aligning = self.settling = False
-        self.active_target = target
         # Waypoint changes must not renew the turn allowance. Measure motion
         # in odometry so map corrections cannot count as translation.
         position = state.pose[:2]
@@ -128,19 +111,6 @@ class MotionController:
                 'turned_radians': self.turn_without_progress,
                 'displacement': math.dist(position, self.turn_anchor),
             })
-        if self.handoff_pending:
-            if abs(state.v) > .025 or abs(state.w) > c.angular_settle_speed:
-                details = dict(target=target.point, measured_v=state.v, measured_w=state.w)
-                clear, trajectory = self.safe(state, scan, 0., 0., now, details)
-                return MotionResult(reason='BRAKE_FOR_HANDOFF' if clear else 'EMERGENCY_STOP',
-                                    blocked=not clear, trajectory=trajectory, diagnostics=details)
-            self.handoff_pending = False
-        if self.passage_exit_pending:
-            local_scan = replace(scan_at_pose(scan, state.pose), coverage_time=now,
-                                 coverage_timeout=c.sensor_timeout)
-            if circles_observed(local_scan, [(0., 0.)], c.radius+c.target_reserve,
-                                occupied_radius=c.radius)[0]:
-                self.passage_exit_pending = False
         # Steering needs the target's distance and angle relative to the robot now.
         local = inverse_points([target.point], state.pose)[0]
         distance = float(np.linalg.norm(local))
@@ -165,16 +135,11 @@ class MotionController:
 
         # Larger heading errors request faster turning, up to the angular limit.
         desired_w = float(np.clip(c.heading_gain*heading, -c.max_angular, c.max_angular))
-        passage = target.mode == 'PASSAGE'
-        steer_while_moving = not passage and not self.aligning and abs(heading) < 1.4
+        forward_recovery = target.mode in ('FOLLOW_WALL', 'FORWARD_CORRECTION', 'RECOVERY_ADVANCE')
+        steer_while_moving = forward_recovery and not target.reverse and abs(heading) <= math.pi/4
         was_aligning = self.aligning
-        # Restore precise passage alignment: even a small heading error can
-        # carry the body into the side of a narrow entrance before it corrects.
-        if passage:
-            alignment_limit = min(c.alignment_tolerance, .01)
-        else:
-            alignment_limit = c.alignment_tolerance if was_aligning else 1.4
-        self.aligning = not steer_while_moving and abs(heading) >= alignment_limit
+        self.aligning = not steer_while_moving and abs(heading) >= (
+            c.alignment_tolerance if was_aligning else c.rotate_threshold)
         self.settling = not steer_while_moving and not self.aligning and (
             was_aligning or self.settling)
         details = dict(heading_error=heading, target_distance=distance,
@@ -182,16 +147,6 @@ class MotionController:
         # Collect linear-speed limits with their reasons, then use the lowest.
         # A replay bend may lower the ordinary cruise-speed ceiling.
         top = min(c.max_linear, c.max_linear if speed_cap is None else speed_cap)
-        if passage or self.passage_exit_pending:
-            top = min(top, .10, c.max_linear/3)
-        details['passage_exit_pending'] = self.passage_exit_pending
-        curvature = 2*math.sin(heading)/max(distance, c.target_min_distance)
-        if target.reverse:
-            curvature = -curvature
-        if not self.aligning:
-            top = min(top, math.sqrt(c.lateral_acceleration/max(abs(curvature), 1e-6)),
-                      c.max_angular/max(abs(curvature), 1e-6))
-            desired_w = curvature*(-top if target.reverse else top)
         reasons = [(top, 'SPEED_LIMIT' if top == c.max_linear else 'ROUTE_BEND')]
 
         # Reduce forward motion while pointing away from the desired direction.
@@ -203,24 +158,22 @@ class MotionController:
             reasons.append((c.lateral_acceleration/abs(desired_w), 'TURN'))
 
         # Final goals and short approaches cap speed by the remaining stopping distance.
-        if target.mode in ('FINAL', 'APPROACH', 'RECOVERY_REVERSE', 'RECOVERY_ADVANCE', 'PASSAGE'):
+        if target.mode in ('FINAL', 'APPROACH', 'RECOVERY_REVERSE', 'RECOVERY_ADVANCE'):
             reasons.append((
                 math.sqrt(2*c.linear_braking*max(0., distance-target.arrival_distance(c.goal_tolerance))),
                 'ARRIVAL',
             ))
 
-        # Anticipate obstacles along the tracking arc. Reserve maneuvering
+        # Anticipate an obstacle during near-straight travel. Reserve maneuvering
         # room plus the command horizon, latency and braking distance.
-        if not self.aligning:
+        if not self.aligning and abs(desired_w) <= .15:
             local_scan = scan_at_pose(scan, state.pose)
-            direction = -1. if target.reverse else 1.
+            direction = math.pi if target.reverse else 0.
             delay = c.command_latency+max(0., now-scan.received)+c.prediction_horizon
-            # Retain the working baseline's maneuvering reserve during crawl.
-            reserve = c.target_reserve
-            lookahead = top*delay+top*top/(2*c.linear_braking)+reserve
-            room = arc_obstacle_distance(
-                local_scan.points, curvature, direction, c.radius, lookahead)
-            available = max(0., room-reserve)
+            lookahead = top*delay+top*top/(2*c.linear_braking)+c.target_reserve
+            room = float(free_distances(
+                local_scan.points, [direction], c.radius, lookahead)[0])
+            available = max(0., room-c.target_reserve)
             braking_delay = c.linear_braking*delay
             clearance_speed = math.sqrt(braking_delay**2+2*c.linear_braking*available)-braking_delay
             reasons.append((clearance_speed, 'OBSTACLE_APPROACH'))
@@ -233,12 +186,6 @@ class MotionController:
         if target.reverse:
             desired = -min(desired, c.reverse_speed)
             reason = 'REVERSE'
-
-        if not self.aligning:
-            desired_w = curvature*desired
-        if passage and abs(state.v) > top+.005:
-            desired_w = 0.
-            reason = 'BRAKE_FOR_PASSAGE'
 
         if self.aligning:
             desired, reason = 0., 'ALIGN'
@@ -278,6 +225,15 @@ class MotionController:
             attempts.append(dict(v=candidate_v, w=candidate_w, clear=safe, **checks))
             details.update(checks)
             if safe:
+                if abs(candidate_v) <= .004 and reason == 'OBSTACLE_APPROACH':
+                    details['translation_rejection'] = 'OBSTACLE'
+                    stop_details = {}
+                    stop_clear, stop_trajectory = self.safe(
+                        state, scan, 0., 0., now, stop_details)
+                    details['stop_clearance'] = stop_details
+                    return MotionResult(0., 0.,
+                                        'TRANSLATION_OBSTACLE' if stop_clear else 'EMERGENCY_STOP',
+                                        True, stop_trajectory, details)
                 preferred = (candidate_v, candidate_w) == (v, w)
                 details['selected_candidate'] = len(attempts)-1
                 return MotionResult(candidate_v, candidate_w,

@@ -40,6 +40,11 @@ def course(name):
         return boundary, (3., 0.)
     if name == 'obstacle':
         return boundary+rectangle(1., -.45, 1.35, .45), (3., 0.)
+    if name == 'corridor':
+        return [((-.5, -.21), (3., -.21)), ((-.5, .21), (3., .21))], (2., 0.)
+    if name == 'staggered':
+        return [((-.5, -.65), (3.5, -.65)), ((-.5, .65), (3.5, .65)),
+                ((.9, -.65), (.9, .08)), ((1.9, -.08), (1.9, .65))], (3., 0.)
     if name == 'pocket':
         # This layout tests leaving a tempting dead end to find a route around it.
         return boundary+[((.65, -.6), (2., -.6)), ((2., -.6), (2., .6)),
@@ -165,7 +170,7 @@ def main(args=None):
     and optionally export CSV/NPZ files. Incomplete runs exit with failure.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner'), default='obstacle')
+    parser.add_argument('--scenario', choices=('straight', 'obstacle', 'pocket', 'corner', 'corridor', 'staggered'), default='obstacle')
     parser.add_argument('--seconds', type=float, default=90.)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--two-runs', action='store_true')

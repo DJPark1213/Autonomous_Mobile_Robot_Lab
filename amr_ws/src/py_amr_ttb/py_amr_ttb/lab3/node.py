@@ -21,8 +21,6 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
-from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
-from rcl_interfaces.srv import SetParameters, GetParameters
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from py_amr_ttb.lab_config import Lab3Config
@@ -74,7 +72,6 @@ class Lab3Node(Node):
         values = {field.name: self.declare_parameter(field.name, getattr(defaults, field.name)).value
                   for field in fields(defaults)}
         self.cfg = Lab3Config(**values)
-        self.configure_base()
         self.tracker = StateTracker(self.cfg)
         self.controller = MotionController(self.cfg)
         self.scan = self.plan = None
@@ -111,86 +108,6 @@ class Lab3Node(Node):
                                                 ('save', self.save_run))]
         self.timer = self.create_timer(self.cfg.control_period, self.tick)
         self.get_logger().info(f'Lab 3 {self.cfg.run_mode}; telemetry: {self.telemetry.path}')
-
-    def find_base_parameter_node(self):
-        """Discover parameter services inside this robot's namespace."""
-        configured = self.declare_parameter('motion_control_node', '').value.strip()
-        if configured:
-            if not configured.startswith('/'):
-                raise ValueError('motion_control_node must be an absolute ROS node name')
-            return configured.rstrip('/')
-        expected = self.cfg.topic('motion_control')
-        deadline = time.monotonic()+15.
-        available = []
-        while rclpy.ok() and time.monotonic() < deadline:
-            services = dict(self.get_service_names_and_types())
-            available = sorted(
-                name.removesuffix('/set_parameters') for name, types in services.items()
-                if name.endswith('/set_parameters')
-                and 'rcl_interfaces/srv/SetParameters' in types
-                and 'rcl_interfaces/srv/GetParameters' in services.get(
-                    name.removesuffix('/set_parameters')+'/get_parameters', []))
-            candidates = [name for name in available
-                          if name.startswith(self.cfg.robot_namespace+'/')
-                          and name.endswith('/motion_control')]
-            if expected in candidates:
-                return expected
-            if len(candidates) == 1:
-                return candidates[0]
-            rclpy.spin_once(self, timeout_sec=.2)
-        raise RuntimeError(
-            f'Cannot discover Create 3 motion_control under {self.cfg.robot_namespace}. '
-            f'Visible parameter nodes: {available}. '
-            'Set motion_control_node:=/actual/node/name after checking ros2 service list -t. '
-            'If the base is absent, check its ROS domain and discovery configuration.')
-
-    def configure_base(self):
-        """Set the requested base mode and verify its speed before starting control."""
-        mode = self.declare_parameter('safety_override', 'unchanged').value
-        if mode not in ('unchanged', 'none', 'backup_only', 'full'):
-            raise ValueError('safety_override must be unchanged, none, backup_only, or full')
-        if mode != 'full' and self.cfg.max_linear > .306:
-            raise ValueError('Speeds above 0.306 m/s require safety_override=full')
-        if mode == 'unchanged':
-            return
-        base_node = self.find_base_parameter_node()
-        self.get_logger().info(f'Configuring Create 3 through {base_node}')
-        setter = self.create_client(SetParameters, base_node+'/set_parameters')
-        getter = self.create_client(GetParameters, base_node+'/get_parameters')
-        try:
-            if not setter.wait_for_service(timeout_sec=10.) or not getter.wait_for_service(timeout_sec=10.):
-                raise RuntimeError(f'Create 3 parameter services unavailable at {base_node}; check ros2 service list -t')
-            request = SetParameters.Request(parameters=[
-                Parameter(name='safety_override', value=ParameterValue(
-                    type=ParameterType.PARAMETER_STRING, string_value=mode))])
-            future = setter.call_async(request)
-            rclpy.spin_until_future_complete(self, future, timeout_sec=10.)
-            if not future.done():
-                raise RuntimeError('Timed out configuring Create 3 safety_override')
-            response = future.result()
-            if response is None or len(response.results) != 1 or not response.results[0].successful:
-                reason = response.results[0].reason if response and response.results else 'empty response'
-                raise RuntimeError('Create 3 rejected safety_override: '+reason)
-            future = getter.call_async(GetParameters.Request(names=['max_speed']))
-            rclpy.spin_until_future_complete(self, future, timeout_sec=10.)
-            if not future.done():
-                raise RuntimeError('Timed out reading Create 3 max_speed')
-            response = future.result()
-            if (response is None or len(response.values) != 1
-                    or response.values[0].type != ParameterType.PARAMETER_DOUBLE):
-                raise RuntimeError('Create 3 returned an invalid max_speed')
-            maximum = response.values[0].double_value
-            if not math.isfinite(maximum) or maximum+1e-6 < self.cfg.max_linear:
-                raise RuntimeError(
-                    f'Create 3 max_speed {maximum} is below requested {self.cfg.max_linear}')
-            self.get_logger().info(
-                f'Create 3 safety_override={mode}; base limit={maximum:.3f} m/s; '
-                f'navigation limit={self.cfg.max_linear:.3f} m/s')
-            if mode == 'full':
-                self.get_logger().warning('Create 3 cliff protection and backup limit are disabled')
-        finally:
-            self.destroy_client(setter)
-            self.destroy_client(getter)
 
     def start_worker(self):
         """A long mapping step must not hold up sensor callbacks or
@@ -327,10 +244,7 @@ class Lab3Node(Node):
                 if previous.sequence != scan.sequence
                 and 0 <= now-previous.received <= self.cfg.sensor_timeout))
         result = MotionResult(reason='WAITING_FOR_SENSORS')
-        controller_state = dict(aligning=self.controller.aligning, settling=self.controller.settling,
-                                active_target=self.controller.active_target,
-                                handoff_pending=self.controller.handoff_pending,
-                                passage_exit_pending=self.controller.passage_exit_pending)
+        controller_state = dict(aligning=self.controller.aligning, settling=self.controller.settling)
         # Missing prerequisites must not leave the previous motion command active.
         valid = (state is not None and scan is not None and self.tracker.fresh(now)
                  and 0 <= now-scan.received <= self.cfg.sensor_timeout)
@@ -401,8 +315,7 @@ class Lab3Node(Node):
                                        command_v=result.v, command_w=result.w,
                                        mode=plan.target.mode if plan and plan.target else '',
                                        reason=result.reason,
-                                       diagnostics=json.dumps(failure_details or dict(
-                                           result.diagnostics, planner=plan.diagnostics if plan else {}), default=str),
+                                       diagnostics=json.dumps(failure_details or result.diagnostics, default=str),
                                        plan_age=now-plan.created if plan else '',
                                        worker_seconds=plan.diagnostics.get('worker_seconds', '') if plan else '',
                                        control_seconds=time.monotonic()-started,
