@@ -249,7 +249,7 @@ class Lab3Node(Node):
         valid = (state is not None and scan is not None and self.tracker.fresh(now)
                  and 0 <= now-scan.received <= self.cfg.sensor_timeout)
         if self.fault:
-            result.reason = 'FAULT: '+self.fault
+            result.reason = self.fault if self.fault == 'NO_MOTION_RESPONSE' else 'FAULT: '+self.fault
         elif self.paused:
             result.reason = 'PAUSED'
         elif not self.worker.is_alive():
@@ -263,26 +263,34 @@ class Lab3Node(Node):
                                                   self.result.reason)):
                     self.last_submit = now
             result = self.controller.step_plan(state, scan, plan, now, dt, self.published_command)
-        # A command ramp cannot recover a base that never responds.
-        if (valid and (abs(result.v) >= .05 or abs(result.w) >= .25)
+        finished = time.monotonic()
+        if finished-started > self.cfg.control_period:
+            result = MotionResult(reason='CONTROL_DEADLINE', diagnostics={
+                **result.diagnostics, 'elapsed': finished-started, 'budget': self.cfg.control_period})
+        elif (result.v or result.w) and finished > result.diagnostics['valid_until']:
+            result = MotionResult(reason='COMMAND_EXPIRED', diagnostics=dict(
+                result.diagnostics, checked_at=finished, rejected_v=result.v, rejected_w=result.w))
+        # Measure response to the command published during the preceding interval.
+        previous = self.published_command
+        if (valid and (abs(previous[0]) >= .05 or abs(previous[1]) >= .25)
                 and abs(state.v) < .01 and abs(state.w) < .05):
             if self.no_motion_since is None:
                 self.no_motion_since = now
             elif now-self.no_motion_since >= 2.:
-                self.fault = 'No measured motion after two seconds of velocity commands'
-                result = MotionResult(reason='FAULT: '+self.fault)
+                self.fault = 'NO_MOTION_RESPONSE'
+                result = MotionResult(reason='NO_MOTION_RESPONSE',
+                                      diagnostics=dict(result.diagnostics))
         else:
             self.no_motion_since = None
-        finished = time.monotonic()
-        if finished-started > self.cfg.control_period:
-            result = MotionResult(reason='CONTROL_DEADLINE', diagnostics={
-                'elapsed': finished-started, 'budget': self.cfg.control_period})
-        elif (result.v or result.w) and finished > result.diagnostics['valid_until']:
-            result = MotionResult(reason='COMMAND_EXPIRED', diagnostics=dict(
-                result.diagnostics, checked_at=finished, rejected_v=result.v, rejected_w=result.w))
+        result.diagnostics.update(
+            requested_command=plan.command if plan else None,
+            previous_command=previous,
+            published_command=(result.v, result.w),
+            measured_velocity=(state.v, state.w) if state else None,
+            ramp_reset_reason=result.reason if result.v == 0. and result.w == 0. else None)
         self.result = result
         self.publish(result.v, result.w)
-        if result.reason in ('TRAJECTORY_BLOCKED', 'NO_SAFE_TRAJECTORY', 'INVALID_COMMAND', 'SENSOR_STOP',
+        if result.reason in ('TRAJECTORY_BLOCKED', 'NO_SAFE_TRAJECTORY', 'PLANNER_HOLD', 'NO_MOTION_RESPONSE', 'INVALID_COMMAND', 'SENSOR_STOP',
                              'CONTROL_DEADLINE') and result.reason not in self.captured_failures:
             path = self.telemetry.capture(result.reason, dict(
                 config=self.cfg, state=state, scan=scan, plan=plan,
@@ -294,7 +302,7 @@ class Lab3Node(Node):
             self.get_logger().info(result.reason)
             self.last_reason = result.reason
         failure_details = {}
-        if result.reason in ('TRAJECTORY_BLOCKED', 'NO_SAFE_TRAJECTORY', 'INVALID_COMMAND', 'SENSOR_STOP',
+        if result.reason in ('TRAJECTORY_BLOCKED', 'NO_SAFE_TRAJECTORY', 'PLANNER_HOLD', 'NO_MOTION_RESPONSE', 'INVALID_COMMAND', 'SENSOR_STOP',
                              'WAITING_FOR_SENSORS', 'WAITING_FOR_FRESH_PLAN',
                              'CONTROL_DEADLINE', 'COMMAND_EXPIRED', 'WAITING_FOR_COVERAGE'):
             failure_details = dict(

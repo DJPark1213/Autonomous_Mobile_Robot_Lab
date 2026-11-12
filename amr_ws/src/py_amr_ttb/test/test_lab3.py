@@ -230,6 +230,41 @@ class StateAndMotionTests(unittest.TestCase):
         stopped = controller.step_plan(state, scan(self.cfg), None, .3, .05, previous)
         self.assertEqual((stopped.v, stopped.w), (0., 0.))
 
+    def test_startup_crosses_deadband_after_delay_and_recovers_from_plan_gap(self):
+        controller = MotionController(self.cfg)
+        previous = (0., 0.)
+        pending = []
+        velocity = 0.
+        position = 0.
+        peak_command = 0.
+        for tick in range(100):
+            now = tick*.05
+            state = RobotState((position, 0., 0.), velocity, 0., now, now)
+            # A delayed worker leaves a brief gap after initial forward progress.
+            plan = None if 40 <= tick < 45 else Plan(
+                Target((3., 0.)), (0., 0., 0.), now, command=(.3, 0.))
+            sensor = scan(self.cfg, pose=state.pose, stamp=now)
+            result = controller.step_plan(state, sensor, plan, now, .05, previous)
+            previous = (result.v, result.w)
+            if plan is None:
+                self.assertEqual(previous, (0., 0.))
+            peak_command = max(peak_command, result.v)
+            pending.append(result.v)
+            delayed = pending.pop(0) if len(pending) > 4 else 0.
+            desired = delayed if abs(delayed) >= .06 else 0.
+            velocity += max(-.025, min(.0175, desired-velocity))
+            position += velocity*.05
+        self.assertGreater(peak_command, .1)
+        self.assertGreater(position, .5)
+        self.assertGreater(velocity, .1)
+
+    def test_selected_zero_command_reports_planner_hold(self):
+        state = RobotState((0., 0., 0.), 0., 0., 0., 0.)
+        plan = Plan(Target((2., 0.)), (0., 0., 0.), 0., command=(0., 0.))
+        result = MotionController(self.cfg).step_plan(state, scan(self.cfg), plan, 0., .05)
+        self.assertEqual(result.reason, 'PLANNER_HOLD')
+        self.assertEqual(result.diagnostics['requested_command'], (0., 0.))
+
     def test_stale_scan_stops_valid_plan(self):
         state = RobotState((0., 0., 0.), .2, 0., 1., 1.)
         plan = Plan(Target((2., 0.)), (0., 0., 0.), 1., command=(.3, 0.))

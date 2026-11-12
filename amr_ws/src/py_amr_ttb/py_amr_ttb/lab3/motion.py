@@ -7,7 +7,7 @@ from .trajectory import approach, evaluate_trajectory
 
 
 class MotionController:
-    """Ramp measured velocities and reject commands whose stopping sweep is unsafe."""
+    """Ramp published commands and reject commands whose stopping sweep is unsafe."""
 
     def __init__(self, config):
         self.cfg = config
@@ -42,12 +42,15 @@ class MotionController:
         scan = replace(scan, history=history, coverage=coverage)
         v = approach(previous_command[0], desired_v, c.linear_acceleration, c.linear_braking, dt)
         w = approach(previous_command[1], desired_w, c.angular_acceleration, c.angular_braking, dt)
-        checks = {}
+        checks = dict(previous_command=previous_command,
+                      requested_command=plan.command, ramped_command=(v, w))
         safe, trajectory = self.safe(state, scan, v, w, now, checks)
         receipts = [state.received, scan.received]
         receipts += list(coverage.receipts) if coverage is not None else [item.received for item in history]
         checks['valid_until'] = min(min(receipts)+c.sensor_timeout, plan.created+lifetime)
         reason = 'TRAJECTORY' if plan.status == 'RUNNING' else plan.status
+        if plan.status == 'RUNNING' and desired_v == 0. and desired_w == 0.:
+            reason = 'PLANNER_HOLD'
         if not safe:
             reason = 'TRAJECTORY_BLOCKED'
         return MotionResult(v if safe else 0., w if safe else 0.,
